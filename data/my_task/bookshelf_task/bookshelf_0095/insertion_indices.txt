@@ -1,7 +1,0 @@
-Red book index -> Insertion position (0-based)
-==================================================
-Red book 0: insert at position 1
-Red book 1: insert at position 2
-Red book 2: insert at position 5
-Red book 3: insert at position 6
-Red book 4: insert at position 8

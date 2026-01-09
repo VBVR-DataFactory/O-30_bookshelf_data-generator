@@ -76,3 +76,27 @@ class TaskConfig(GenerationConfig):
         default=200.0,
         description="Maximum book height"
     )
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    #  COLOR RANDOMIZATION SETTINGS (for scalable 10K+ generation)
+    # ══════════════════════════════════════════════════════════════════════════
+    
+    randomize_colors: bool = Field(
+        default=True,
+        description="Whether to randomize book colors for diversity"
+    )
+    
+    min_color_distance: float = Field(
+        default=120.0,
+        description="Minimum HSV distance between existing/new book colors (0-360)"
+    )
+    
+    use_color_names: bool = Field(
+        default=True,
+        description="Whether to use descriptive color names in prompts"
+    )
+    
+    randomize_book_properties: bool = Field(
+        default=True,
+        description="Whether to randomize additional visual properties (width, patterns)"
+    )

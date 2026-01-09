@@ -10,6 +10,7 @@
 import random
 import numpy as np
 import tempfile
+import colorsys
 from pathlib import Path
 from typing import List, Tuple, Dict
 from PIL import Image, ImageDraw
@@ -37,8 +38,120 @@ class TaskGenerator(BaseGenerator):
         if config.generate_videos and VideoGenerator.is_available():
             self.video_generator = VideoGenerator(fps=config.video_fps, output_format="mp4")
     
+    # ══════════════════════════════════════════════════════════════════════════
+    #  SCALABLE COLOR GENERATION SYSTEM
+    # ══════════════════════════════════════════════════════════════════════════
+    
+    def _generate_color_scheme(self) -> Dict[str, Tuple[Tuple[int, int, int], str]]:
+        """
+        Generate procedural color scheme for existing and new books.
+        
+        Returns:
+            Dict with 'existing' and 'new' keys, each containing (rgb_tuple, color_name)
+        """
+        if not self.config.randomize_colors:
+            # Default colors
+            return {
+                'existing': ((70, 130, 180), "blue"),  # Steel blue
+                'new': ((220, 20, 60), "red")  # Crimson red
+            }
+        
+        # Generate two visually distinct colors using HSV space
+        existing_hue = random.uniform(0, 360)
+        
+        # Ensure new book color is sufficiently different
+        min_distance = self.config.min_color_distance
+        new_hue = existing_hue
+        attempts = 0
+        while abs(new_hue - existing_hue) < min_distance and attempts < 10:
+            new_hue = random.uniform(0, 360)
+            if abs(new_hue - existing_hue) > 360 - min_distance:
+                break  # Colors are far apart (wrapping around 360)
+            attempts += 1
+        
+        # Generate colors with good saturation and brightness for visibility
+        existing_rgb = self._hsv_to_rgb(
+            existing_hue / 360.0,
+            random.uniform(0.6, 0.9),  # High saturation
+            random.uniform(0.4, 0.8)   # Medium to high brightness
+        )
+        
+        new_rgb = self._hsv_to_rgb(
+            new_hue / 360.0,
+            random.uniform(0.6, 0.9),  # High saturation
+            random.uniform(0.4, 0.8)   # Medium to high brightness
+        )
+        
+        # Generate descriptive color names
+        existing_name = self._get_color_name(existing_hue) if self.config.use_color_names else "color1"
+        new_name = self._get_color_name(new_hue) if self.config.use_color_names else "color2"
+        
+        return {
+            'existing': (existing_rgb, existing_name),
+            'new': (new_rgb, new_name)
+        }
+    
+    def _hsv_to_rgb(self, h: float, s: float, v: float) -> Tuple[int, int, int]:
+        """Convert HSV to RGB color space."""
+        rgb = colorsys.hsv_to_rgb(h, s, v)
+        return tuple(int(c * 255) for c in rgb)
+    
+    def _get_color_name(self, hue: float) -> str:
+        """
+        Map hue value (0-360) to descriptive color name.
+        Covers entire color wheel with smooth transitions.
+        """
+        # Normalize hue to 0-360
+        hue = hue % 360
+        
+        color_map = [
+            (0, ["red", "crimson", "scarlet"]),
+            (30, ["orange", "amber", "coral"]),
+            (60, ["yellow", "gold", "lemon"]),
+            (90, ["lime", "chartreuse", "spring"]),
+            (120, ["green", "emerald", "forest"]),
+            (150, ["teal", "mint", "seafoam"]),
+            (180, ["cyan", "turquoise", "aqua"]),
+            (210, ["blue", "azure", "sky"]),
+            (240, ["indigo", "navy", "royal"]),
+            (270, ["purple", "violet", "plum"]),
+            (300, ["magenta", "fuchsia", "pink"]),
+            (330, ["rose", "burgundy", "maroon"]),
+            (360, ["red", "crimson", "scarlet"])  # Wrap around
+        ]
+        
+        # Find the closest color range
+        for i, (threshold, names) in enumerate(color_map[:-1]):
+            next_threshold = color_map[i + 1][0]
+            if threshold <= hue < next_threshold:
+                return random.choice(names)
+        
+        # Fallback to red if something goes wrong
+        return random.choice(color_map[0][1])
+    
+    def _generate_additional_properties(self) -> Dict[str, any]:
+        """Generate additional randomized visual properties."""
+        if not self.config.randomize_book_properties:
+            return {
+                'book_width': 30,
+                'shelf_color': (139, 69, 19)  # Brown
+            }
+        
+        return {
+            'book_width': random.randint(25, 40),  # Vary book width
+            'shelf_color': self._hsv_to_rgb(
+                random.uniform(20, 40) / 360.0,  # Brown/wood hues
+                random.uniform(0.3, 0.7),
+                random.uniform(0.2, 0.5)
+            )
+        }
+    
     def generate_task_pair(self, task_id: str) -> TaskPair:
         """Generate one task pair."""
+        
+        # Generate procedural color scheme and visual properties
+        color_scheme = self._generate_color_scheme()
+        visual_props = self._generate_additional_properties()
         
         # Generate book heights
         blue_heights = self._generate_blue_heights()
@@ -59,19 +172,19 @@ class TaskGenerator(BaseGenerator):
         red_queue_order = list(range(len(red_heights)))
         random.shuffle(red_queue_order)
         
-        # Render images
-        first_image = self._render_initial_state(blue_heights, red_heights, insertion_indices, red_queue_order)
-        final_image = self._render_final_state(blue_heights, red_heights, insertion_indices)
+        # Render images with dynamic colors
+        first_image = self._render_initial_state(blue_heights, red_heights, insertion_indices, red_queue_order, color_scheme, visual_props)
+        final_image = self._render_final_state(blue_heights, red_heights, insertion_indices, color_scheme, visual_props)
         
         # Generate video if enabled
         video_path = None
         if self.config.generate_videos and self.video_generator:
             video_path = self._generate_video(
-                blue_heights, red_heights, insertion_indices, task_id, red_queue_order
+                blue_heights, red_heights, insertion_indices, task_id, red_queue_order, color_scheme, visual_props
             )
         
-        # Get prompt
-        prompt = get_prompt("default")
+        # Get prompt with color substitution
+        prompt = get_prompt("default", color_scheme)
         
         return TaskPair(
             task_id=task_id,
@@ -415,7 +528,9 @@ class TaskGenerator(BaseGenerator):
     def _render_initial_state(self, blue_heights: List[float], 
                              red_heights: List[float],
                              insertion_indices: Dict[int, int],
-                             red_queue_order: List[int]) -> Image.Image:
+                             red_queue_order: List[int],
+                             color_scheme: Dict[str, Tuple[Tuple[int, int, int], str]],
+                             visual_props: Dict[str, any]) -> Image.Image:
         """
         Render initial state: blue books on shelf with gaps, red books queued on the right.
         
@@ -430,10 +545,15 @@ class TaskGenerator(BaseGenerator):
         shelf_y = height - 50  # Shelf position (baseline)
         shelf_height = 10  # Shelf thickness
         
-        # Draw shelf (extend to right for red books)
-        draw.rectangle([0, shelf_y, width, shelf_y + shelf_height], fill=(139, 69, 19))
+        # Extract colors and properties
+        existing_color, _ = color_scheme['existing']
+        new_color, _ = color_scheme['new']
+        book_width = visual_props['book_width']
+        shelf_color = visual_props['shelf_color']
         
-        book_width = 30
+        # Draw shelf (extend to right for red books)
+        draw.rectangle([0, shelf_y, width, shelf_y + shelf_height], fill=shelf_color)
+        
         spacing = 5
         x_start = 50
         
@@ -446,12 +566,12 @@ class TaskGenerator(BaseGenerator):
             x = x_start + i * (book_width + spacing)
             
             if pos_type == 'blue':
-                # Draw blue book
+                # Draw existing book with dynamic color
                 scaled_h = int(pos_height * 1.5)
                 y_top = shelf_y - scaled_h
                 draw.rectangle(
                     [x, y_top, x + book_width, shelf_y],
-                    fill=(70, 130, 180),  # Steel blue
+                    fill=existing_color,
                     outline=(0, 0, 0),
                     width=2
                 )
@@ -471,7 +591,7 @@ class TaskGenerator(BaseGenerator):
             
             draw.rectangle(
                 [x, y_top, x + book_width, shelf_y],
-                fill=(220, 20, 60),  # Crimson red
+                fill=new_color,
                 outline=(0, 0, 0),
                 width=2
             )
@@ -519,7 +639,9 @@ class TaskGenerator(BaseGenerator):
     
     def _render_final_state(self, blue_heights: List[float], 
                            red_heights: List[float],
-                           insertion_indices: Dict[int, int]) -> Image.Image:
+                           insertion_indices: Dict[int, int],
+                           color_scheme: Dict[str, Tuple[Tuple[int, int, int], str]],
+                           visual_props: Dict[str, any]) -> Image.Image:
         """
         Render final state: red books fill the gaps.
         
@@ -533,14 +655,19 @@ class TaskGenerator(BaseGenerator):
         shelf_y = height - 50
         shelf_height = 10
         
+        # Extract colors and properties
+        existing_color, _ = color_scheme['existing']
+        new_color, _ = color_scheme['new']
+        book_width = visual_props['book_width']
+        shelf_color = visual_props['shelf_color']
+        
         # Draw shelf
-        draw.rectangle([0, shelf_y, width, shelf_y + shelf_height], fill=(139, 69, 19))
+        draw.rectangle([0, shelf_y, width, shelf_y + shelf_height], fill=shelf_color)
         
         # Build the same layout structure as initial state
         all_positions = self._build_layout_structure(blue_heights, red_heights, insertion_indices)
         
-        # Draw all books (blue books and red books filling gaps)
-        book_width = 30
+        # Draw all books (existing books and new books filling gaps)
         spacing = 5
         x_start = 50
         
@@ -550,11 +677,11 @@ class TaskGenerator(BaseGenerator):
             y_top = shelf_y - scaled_h
             
             if pos_type == 'blue':
-                # Draw blue book (unchanged)
-                fill_color = (70, 130, 180)
+                # Draw existing book (unchanged)
+                fill_color = existing_color
             else:
-                # Draw red book (filling gap)
-                fill_color = (220, 20, 60)
+                # Draw new book (filling gap)
+                fill_color = new_color
             
             draw.rectangle(
                 [x, y_top, x + book_width, shelf_y],
@@ -575,7 +702,9 @@ class TaskGenerator(BaseGenerator):
         red_heights: List[float],
         insertion_indices: Dict[int, int],
         task_id: str,
-        red_queue_order: List[int]
+        red_queue_order: List[int],
+        color_scheme: Dict[str, Tuple[Tuple[int, int, int], str]],
+        visual_props: Dict[str, any]
     ) -> str:
         """Generate animation video showing red books being inserted."""
         temp_dir = Path(tempfile.gettempdir()) / f"{self.config.domain}_videos"
@@ -584,7 +713,7 @@ class TaskGenerator(BaseGenerator):
         
         # Create animation frames
         frames = self._create_insertion_animation_frames(
-            blue_heights, red_heights, insertion_indices, red_queue_order
+            blue_heights, red_heights, insertion_indices, red_queue_order, color_scheme, visual_props
         )
         
         result = self.video_generator.create_video_from_frames(
@@ -600,6 +729,8 @@ class TaskGenerator(BaseGenerator):
         red_heights: List[float],
         insertion_indices: Dict[int, int],
         red_queue_order: List[int],
+        color_scheme: Dict[str, Tuple[Tuple[int, int, int], str]],
+        visual_props: Dict[str, any],
         hold_frames: int = 10,
         transition_frames: int = 30
     ) -> List[Image.Image]:
@@ -656,7 +787,7 @@ class TaskGenerator(BaseGenerator):
         frames = []
         
         # Initial state (with gaps and red books queued on the right)
-        first_frame = self._render_initial_state(blue_heights, red_heights, insertion_indices, red_queue_order)
+        first_frame = self._render_initial_state(blue_heights, red_heights, insertion_indices, red_queue_order, color_scheme, visual_props)
         for _ in range(hold_frames):
             frames.append(first_frame.copy())
         
@@ -674,7 +805,7 @@ class TaskGenerator(BaseGenerator):
                 # Create frame with red book at intermediate position
                 frame = self._render_horizontal_move_frame(
                     blue_heights, red_heights, insertion_indices,
-                    red_idx, insertion_pos, progress, filled_slots, red_queue_order
+                    red_idx, insertion_pos, progress, filled_slots, red_queue_order, color_scheme, visual_props
                 )
                 frames.append(frame)
             
@@ -684,13 +815,13 @@ class TaskGenerator(BaseGenerator):
             if filled_slots < len(red_insertions):
                 # Show partial state (some slots filled)
                 partial_frame = self._render_partial_state(
-                    blue_heights, red_heights, insertion_indices, filled_slots, red_queue_order
+                    blue_heights, red_heights, insertion_indices, filled_slots, red_queue_order, color_scheme, visual_props
                 )
                 for _ in range(hold_frames // 2):
                     frames.append(partial_frame.copy())
         
-        # Final state: all red books inserted, keep this state static
-        final_frame = self._render_final_state(blue_heights, red_heights, insertion_indices)
+        # Final state: all new books inserted, keep this state static
+        final_frame = self._render_final_state(blue_heights, red_heights, insertion_indices, color_scheme, visual_props)
         for _ in range(hold_frames):
             frames.append(final_frame.copy())
         
@@ -705,7 +836,9 @@ class TaskGenerator(BaseGenerator):
         target_slot_pos: int,
         progress: float,
         filled_slots: int,
-        red_queue_order: List[int]
+        red_queue_order: List[int],
+        color_scheme: Dict[str, Tuple[Tuple[int, int, int], str]],
+        visual_props: Dict[str, any]
     ) -> Image.Image:
         """
         Render frame with red book moving horizontally from right queue to its slot.
@@ -726,8 +859,14 @@ class TaskGenerator(BaseGenerator):
         spacing = 5
         x_start = 50
         
+        # Extract colors and properties
+        existing_color, _ = color_scheme['existing']
+        new_color, _ = color_scheme['new']
+        book_width = visual_props['book_width']
+        shelf_color = visual_props['shelf_color']
+        
         # Draw shelf
-        draw.rectangle([0, shelf_y, width, shelf_y + shelf_height], fill=(139, 69, 19))
+        draw.rectangle([0, shelf_y, width, shelf_y + shelf_height], fill=shelf_color)
         
         # Build layout structure (same as initial/final state)
         all_positions = self._build_layout_structure(blue_heights, red_heights, insertion_indices)
@@ -805,7 +944,7 @@ class TaskGenerator(BaseGenerator):
                 y_top = shelf_y - scaled_h_blue
                 draw.rectangle(
                     [x, y_top, x + book_width, shelf_y],
-                    fill=(70, 130, 180),
+                    fill=existing_color,
                     outline=(0, 0, 0),
                     width=2
                 )
@@ -817,7 +956,7 @@ class TaskGenerator(BaseGenerator):
                     gap_y_top = shelf_y - scaled_h_gap
                     draw.rectangle(
                         [x, gap_y_top, x + book_width, shelf_y],
-                        fill=(220, 20, 60),
+                        fill=new_color,
                         outline=(0, 0, 0),
                         width=2
                     )
@@ -841,7 +980,7 @@ class TaskGenerator(BaseGenerator):
             
             draw.rectangle(
                 [x, y_top, x + book_width, shelf_y],
-                fill=(220, 20, 60),
+                fill=new_color,
                 outline=(0, 0, 0),
                 width=2
             )
@@ -849,7 +988,7 @@ class TaskGenerator(BaseGenerator):
         # Draw moving red book
         draw.rectangle(
             [int(current_x), int(current_y), int(current_x) + book_width, int(current_y) + scaled_h],
-            fill=(220, 20, 60),
+            fill=new_color,
             outline=(0, 0, 0),
             width=2
         )
@@ -862,7 +1001,9 @@ class TaskGenerator(BaseGenerator):
         red_heights: List[float],
         insertion_indices: Dict[int, int],
         filled_slots: int,
-        red_queue_order: List[int]
+        red_queue_order: List[int],
+        color_scheme: Dict[str, Tuple[Tuple[int, int, int], str]],
+        visual_props: Dict[str, any]
     ) -> Image.Image:
         """
         Render partial state with some slots filled, red books still queued on right.
@@ -880,8 +1021,14 @@ class TaskGenerator(BaseGenerator):
         spacing = 5
         x_start = 50
         
+        # Extract colors and properties
+        existing_color, _ = color_scheme['existing']
+        new_color, _ = color_scheme['new']
+        book_width = visual_props['book_width']
+        shelf_color = visual_props['shelf_color']
+        
         # Draw shelf
-        draw.rectangle([0, shelf_y, width, shelf_y + shelf_height], fill=(139, 69, 19))
+        draw.rectangle([0, shelf_y, width, shelf_y + shelf_height], fill=shelf_color)
         
         # Build layout structure (same as initial/final state)
         all_positions = self._build_layout_structure(blue_heights, red_heights, insertion_indices)
@@ -906,7 +1053,7 @@ class TaskGenerator(BaseGenerator):
                 y_top = shelf_y - scaled_h
                 draw.rectangle(
                     [x, y_top, x + book_width, shelf_y],
-                    fill=(70, 130, 180),
+                    fill=existing_color,
                     outline=(0, 0, 0),
                     width=2
                 )
@@ -918,7 +1065,7 @@ class TaskGenerator(BaseGenerator):
                     gap_y_top = shelf_y - scaled_h
                     draw.rectangle(
                         [x, gap_y_top, x + book_width, shelf_y],
-                        fill=(220, 20, 60),
+                        fill=new_color,
                         outline=(0, 0, 0),
                         width=2
                     )
@@ -938,7 +1085,7 @@ class TaskGenerator(BaseGenerator):
             
             draw.rectangle(
                 [x, y_top, x + book_width, shelf_y],
-                fill=(220, 20, 60),
+                fill=new_color,
                 outline=(0, 0, 0),
                 width=2
             )
