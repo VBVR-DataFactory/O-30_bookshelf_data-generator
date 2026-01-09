@@ -16,100 +16,29 @@ parts/
 sdist/
 var/
 wheels/
-pip-wheel-metadata/
-share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
 
-# Virtual environments
+# Virtual Environment
 venv/
 env/
 ENV/
-env.bak/
-venv.bak/
 
-# IDEs
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
+
+# OS
 .DS_Store
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.hypothesis/
-
-# Generated data (don't commit actual generated datasets)
-data/questions/*/
-data/outputs/*/
-data/evaluations/*/
-*.png
-*.jpg
-*.jpeg
-
-# Keep directory structure but not contents
-!data/questions/.gitkeep
-!data/outputs/.gitkeep
-
-# Logs
-*.log
-logs/
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-
-# Jupyter
-.ipynb_checkpoints/
-*.ipynb
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Distribution / packaging
-.Python
-*.manifest
-*.spec
-
-# Environments
-.env
-.env.local
-.venv
-
-# PyCharm
-.idea/
-
-# VS Code
-.vscode/
-
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-
-# Thumbnails
+.DS_Store?
 ._*
-
-# Files that might appear in the root of a volume
-.DocumentRevisions-V100
-.fseventsd
 .Spotlight-V100
-.TemporaryItems
 .Trashes
-.VolumeIcon.icns
-.com.apple.timemachine.donotpresent
-
-# Windows
-Thumbs.db
 ehthumbs.db
-Desktop.ini
-$RECYCLE.BIN/
+Thumbs.db
+
+# Generated data (optional - uncomment if you don't want to track generated samples)
+# data/

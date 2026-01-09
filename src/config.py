@@ -1,21 +1,22 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║                           YOUR TASK CONFIGURATION                             ║
+║                           BOOKSHELF INSERTION CONFIGURATION                   ║
 ║                                                                               ║
-║  CUSTOMIZE THIS FILE to define your task-specific settings.                   ║
+║  Configuration for Bookshelf Book Insertion Task.                            ║
 ║  Inherits common settings from core.GenerationConfig                          ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
 
+from typing import Optional
 from pydantic import Field
 from core import GenerationConfig
 
 
 class TaskConfig(GenerationConfig):
     """
-    Your task-specific configuration.
+    Bookshelf Insertion task configuration.
     
-    CUSTOMIZE THIS CLASS to add your task's hyperparameters.
+    Task: Insert red books into gaps between blue books based on height clustering.
     
     Inherited from GenerationConfig:
         - num_samples: int          # Number of samples to generate
@@ -30,8 +31,8 @@ class TaskConfig(GenerationConfig):
     #  OVERRIDE DEFAULTS
     # ══════════════════════════════════════════════════════════════════════════
     
-    domain: str = Field(default="chess")
-    image_size: tuple[int, int] = Field(default=(512, 512))
+    domain: str = Field(default="bookshelf")
+    image_size: tuple[int, int] = Field(default=(800, 400))
     
     # ══════════════════════════════════════════════════════════════════════════
     #  VIDEO SETTINGS
@@ -51,4 +52,27 @@ class TaskConfig(GenerationConfig):
     #  TASK-SPECIFIC SETTINGS
     # ══════════════════════════════════════════════════════════════════════════
     
-    # Add your custom settings here
+    num_blue_books: int = Field(
+        default=10,
+        description="Number of blue books (existing books on shelf)"
+    )
+    
+    num_red_books: int = Field(
+        default=3,
+        description="Number of red books (books to insert)"
+    )
+    
+    eps: Optional[float] = Field(
+        default=None,
+        description="Clustering threshold. If None, uses 0.05 * median(blue_heights)"
+    )
+    
+    min_book_height: float = Field(
+        default=50.0,
+        description="Minimum book height"
+    )
+    
+    max_book_height: float = Field(
+        default=200.0,
+        description="Maximum book height"
+    )

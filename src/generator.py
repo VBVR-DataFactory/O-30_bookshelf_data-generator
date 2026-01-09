@@ -8,83 +8,70 @@
 """
 
 import random
+import numpy as np
 import tempfile
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont, ImageChops, ImageFilter
+from typing import List, Tuple, Dict
+from PIL import Image, ImageDraw
 
 from core import BaseGenerator, TaskPair, ImageRenderer
 from core.video_utils import VideoGenerator
 from .config import TaskConfig
 from .prompts import get_prompt
 
-# Check if chess library is available
-import importlib.util
-
-CHESS_AVAILABLE = importlib.util.find_spec("chess") is not None
-
-if CHESS_AVAILABLE:
-    import chess
-    import chess.svg
-    
-    # Check if cairosvg is available for high-quality SVG rendering
-    CAIROSVG_AVAILABLE = importlib.util.find_spec("cairosvg") is not None
-    if CAIROSVG_AVAILABLE:
-        import cairosvg
-else:
-    chess = None
-    CAIROSVG_AVAILABLE = False
-    print("⚠️  Warning: python-chess not installed. Using fallback templates.")
-    print("   Install with: pip install python-chess")
-
 
 class TaskGenerator(BaseGenerator):
     """
-    Your custom task generator.
+    Bookshelf insertion task generator.
     
-    IMPLEMENT THIS CLASS for your specific task.
-    
-    Required:
-        - generate_task_pair(task_id) -> TaskPair
-    
-    The base class provides:
-        - self.config: Your TaskConfig instance
-        - generate_dataset(): Loops and calls generate_task_pair() for each sample
+    Generates tasks where red books need to be inserted into a shelf of blue books
+    based on height clustering and matching.
     """
     
     def __init__(self, config: TaskConfig):
         super().__init__(config)
         self.renderer = ImageRenderer(image_size=config.image_size)
         
-        # Initialize video generator if enabled (using mp4 format)
+        # Initialize video generator if enabled
         self.video_generator = None
         if config.generate_videos and VideoGenerator.is_available():
             self.video_generator = VideoGenerator(fps=config.video_fps, output_format="mp4")
-        
-        # Fallback templates if chess library not installed
-        self.use_templates = not CHESS_AVAILABLE
-        if self.use_templates:
-            self.templates = self._get_fallback_templates()
     
     def generate_task_pair(self, task_id: str) -> TaskPair:
         """Generate one task pair."""
         
-        # Generate task data
-        if self.use_templates:
-            task_data = random.choice(self.templates)
-        else:
-            task_data = self._generate_task_data()
+        # Generate book heights
+        blue_heights = self._generate_blue_heights()
+        
+        # Randomly determine number of red books (gaps) for variety
+        # Number of gaps must equal number of red books
+        num_red = random.randint(2, 5)  # Vary between 2-5 red books
+        
+        # Calculate slot positions and adjacent blue books
+        slot_info = self._calculate_slot_info(blue_heights, num_red)
+        
+        # Generate red book heights from adjacent blue books, then assign to slots
+        red_heights, insertion_indices = self._generate_red_heights_and_assign(
+            blue_heights, slot_info, num_red
+        )
+        
+        # Generate random queue order for red books (consistent across all renders)
+        red_queue_order = list(range(len(red_heights)))
+        random.shuffle(red_queue_order)
         
         # Render images
-        first_image = self._render_initial_state(task_data)
-        final_image = self._render_final_state(task_data)
+        first_image = self._render_initial_state(blue_heights, red_heights, insertion_indices, red_queue_order)
+        final_image = self._render_final_state(blue_heights, red_heights, insertion_indices)
         
-        # Generate video (optional)
+        # Generate video if enabled
         video_path = None
         if self.config.generate_videos and self.video_generator:
-            video_path = self._generate_video(first_image, final_image, task_id, task_data)
+            video_path = self._generate_video(
+                blue_heights, red_heights, insertion_indices, task_id, red_queue_order
+            )
         
-        # Select prompt
-        prompt = get_prompt(task_data.get("type", "default"))
+        # Get prompt
+        prompt = get_prompt("default")
         
         return TaskPair(
             task_id=task_id,
@@ -92,60 +79,513 @@ class TaskGenerator(BaseGenerator):
             prompt=prompt,
             first_image=first_image,
             final_image=final_image,
-            ground_truth_video=video_path
+            ground_truth_video=video_path,
+            insertion_indices=insertion_indices
         )
     
     # ══════════════════════════════════════════════════════════════════════════
-    #  TASK-SPECIFIC METHODS
+    #  DATA GENERATION
     # ══════════════════════════════════════════════════════════════════════════
     
-    def _generate_task_data(self) -> dict:
-        """Generate mate-in-1 position using chess library."""
-        generators = [
-            self._gen_back_rank_mate,
-            self._gen_queen_mate,
-            self._gen_rook_mate,
-        ]
+    def _generate_blue_heights(self) -> List[float]:
+        """Generate blue book heights with clustering structure."""
+        num_books = self.config.num_blue_books
+        min_h = self.config.min_book_height
+        max_h = self.config.max_book_height
         
-        for _ in range(10):  # Try up to 10 times
-            gen_func = random.choice(generators)
-            position = gen_func()
-            if position and self._validate_mate(position):
-                return position
+        # Generate heights in groups to create natural clusters
+        heights = []
+        num_groups = random.randint(2, 4)  # 2-4 groups
+        books_per_group = num_books // num_groups
+        remainder = num_books % num_groups
         
-        # Fallback to template
-        return random.choice(self._get_fallback_templates())
+        for group_idx in range(num_groups):
+            group_size = books_per_group + (1 if group_idx < remainder else 0)
+            # Each group has a base height
+            base_height = min_h + (max_h - min_h) * (group_idx + 1) / (num_groups + 1)
+            # Add small variations within group
+            for _ in range(group_size):
+                variation = random.uniform(-0.1, 0.1) * (max_h - min_h)
+                heights.append(base_height + variation)
+        
+        # Shuffle to create more realistic distribution
+        random.shuffle(heights)
+        
+        # Sort to create clusters naturally
+        heights.sort()
+        
+        return heights
     
-    def _render_initial_state(self, task_data: dict) -> Image.Image:
-        """Render chess position from FEN."""
-        return self._render_board(task_data["fen"])
+    def _calculate_slot_info(self, blue_heights: List[float], num_red: int) -> List[Tuple[int, List[float]]]:
+        """
+        Calculate slot positions and their adjacent blue book heights.
+        
+        Args:
+            blue_heights: List of blue book heights
+            num_red: Number of red books (gaps) - must equal number of slots
+        
+        Returns:
+            List of (slot_position, [adjacent_blue_heights]) tuples
+        """
+        num_blue = len(blue_heights)
+        
+        slot_info = []
+        
+        # Slots between blue books: positions 1, 2, ..., num_blue-1
+        for i in range(1, num_blue):
+            # Slot at position i is between blue[i-1] and blue[i]
+            adjacent_heights = [blue_heights[i - 1], blue_heights[i]]
+            slot_info.append((i, adjacent_heights))
+        
+        # If we need more slots, add slots at the ends
+        if len(slot_info) < num_red:
+            # Add slot before first blue book
+            slot_info.insert(0, (0, [blue_heights[0]]))
+            
+            if len(slot_info) < num_red:
+                # Add slot after last blue book
+                slot_info.append((num_blue, [blue_heights[num_blue - 1]]))
+        
+        # Ensure we have exactly num_red slots
+        if len(slot_info) > num_red:
+            # Randomly select num_red slots for more diverse gap patterns
+            # This creates varied distributions instead of uniform spacing
+            selected_indices = sorted(random.sample(range(len(slot_info)), num_red))
+            slot_info = [slot_info[i] for i in selected_indices]
+        elif len(slot_info) < num_red:
+            raise ValueError(f"Cannot create {num_red} slots with {num_blue} blue books")
+        
+        return slot_info
     
-    def _render_final_state(self, task_data: dict) -> Image.Image:
-        """Render position after mate move."""
-        if CHESS_AVAILABLE:
-            board = chess.Board(task_data["fen"])
-            move = chess.Move.from_uci(task_data["solution"])
-            board.push(move)
-            return self._render_board(board.fen())
+    def _generate_red_heights_and_assign(
+        self,
+        blue_heights: List[float],
+        slot_info: List[Tuple[int, List[float]]],
+        num_red: int
+    ) -> Tuple[List[float], Dict[int, int]]:
+        """
+        Generate red book heights from adjacent blue books and assign to slots.
+        
+        Each red book height is chosen from the adjacent blue books of its assigned slot.
+        Uses optimal assignment based on slot target heights, then selects closest
+        adjacent blue book height for each assigned slot.
+        
+        Args:
+            blue_heights: List of blue book heights
+            slot_info: List of (slot_position, [adjacent_blue_heights]) tuples
+            num_red: Number of red books (must equal len(slot_info))
+        
+        Returns:
+            Tuple of (red_heights, insertion_indices)
+        """
+        
+        # Extract slot positions and target heights (average of adjacent blue books)
+        slot_positions = [pos for pos, _ in slot_info]
+        slot_targets = []
+        slot_adjacent_heights = []
+        
+        for pos, adjacent_heights in slot_info:
+            if len(adjacent_heights) == 2:
+                # Slot between two blue books
+                target = (adjacent_heights[0] + adjacent_heights[1]) / 2.0
+            else:
+                # Slot at end (only one adjacent blue book)
+                target = adjacent_heights[0]
+            slot_targets.append(target)
+            slot_adjacent_heights.append(adjacent_heights)
+        
+        # Generate initial red book heights from all adjacent blue books
+        # These will be used for optimal assignment
+        initial_red_heights = []
+        for adjacent_heights in slot_adjacent_heights:
+            # Randomly choose one height from adjacent blue books
+            initial_red_heights.append(random.choice(adjacent_heights))
+        
+        # Optimal assignment: minimize sum of |red_height - slot_target|
+        assignment = self._optimal_assignment(initial_red_heights, slot_targets, slot_positions)
+        
+        # Now generate final red book heights based on assigned slots
+        # Each red book gets a height from its assigned slot's adjacent blue books
+        red_heights = [0.0] * num_red
+        slot_to_red = {}  # slot_pos -> red_idx
+        
+        # Build mapping: slot_pos -> red_idx
+        for red_idx, slot_pos in assignment.items():
+            slot_to_red[slot_pos] = red_idx
+        
+        # Generate red book heights from their assigned slot's adjacent blue books
+        for slot_pos, adjacent_heights in zip(slot_positions, slot_adjacent_heights):
+            if slot_pos in slot_to_red:
+                red_idx = slot_to_red[slot_pos]
+                # Choose the adjacent blue book height closest to slot target
+                slot_idx = slot_positions.index(slot_pos)
+                target = slot_targets[slot_idx]
+                
+                # Find closest adjacent height to target
+                closest_height = min(adjacent_heights, key=lambda h: abs(h - target))
+                red_heights[red_idx] = closest_height
+        
+        return red_heights, assignment
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    #  CLUSTERING LOGIC
+    # ══════════════════════════════════════════════════════════════════════════
+    
+    def _cluster_blue_books(self, blue_heights: List[float]) -> List[Tuple[int, int]]:
+        """
+        Cluster blue books using adjacent difference rule.
+        
+        Returns:
+            List of (start_idx, end_idx) tuples for each cluster (inclusive).
+        """
+        if len(blue_heights) == 0:
+            return []
+        
+        # Calculate eps
+        if self.config.eps is not None:
+            eps = self.config.eps
         else:
-            # Fallback: use pre-computed final FEN if available
-            final_fen = task_data.get("final_fen", task_data["fen"])
-            return self._render_board(final_fen)
+            median_height = np.median(blue_heights)
+            eps = 0.05 * median_height
+        
+        clusters = []
+        cluster_start = 0
+        
+        for i in range(len(blue_heights) - 1):
+            height_diff = abs(blue_heights[i + 1] - blue_heights[i])
+            if height_diff > eps:
+                # Start new cluster
+                clusters.append((cluster_start, i))
+                cluster_start = i + 1
+        
+        # Add final cluster
+        clusters.append((cluster_start, len(blue_heights) - 1))
+        
+        return clusters
+    
+    def _calculate_cluster_means(self, blue_heights: List[float], 
+                                 clusters: List[Tuple[int, int]]) -> List[float]:
+        """Calculate representative height (mean) for each cluster."""
+        means = []
+        for start_idx, end_idx in clusters:
+            cluster_heights = blue_heights[start_idx:end_idx + 1]
+            mean_height = np.mean(cluster_heights)
+            means.append(mean_height)
+        return means
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    #  SLOT ASSIGNMENT (HEIGHT-BASED MATCHING)
+    # ══════════════════════════════════════════════════════════════════════════
+    
+    def _calculate_slot_assignments(
+        self,
+        blue_heights: List[float],
+        red_heights: List[float]
+    ) -> Dict[int, int]:
+        """
+        Calculate slot assignments using height-based matching.
+        
+        Each slot is between two adjacent blue books. Slot target height is
+        the average of the two adjacent blue book heights.
+        
+        Uses optimal assignment (Hungarian-like) to minimize total matching error.
+        
+        Returns:
+            Dictionary mapping red book index -> insertion position (0-based)
+        """
+        num_red = len(red_heights)
+        num_blue = len(blue_heights)
+        
+        # Calculate slot positions and target heights
+        # Slots are between adjacent blue books: gap j between blue[i] and blue[i+1]
+        # Gap j (0-indexed) is at position i+1 (insert after blue book i)
+        
+        # Generate slots between blue books (preferred)
+        slot_positions = []
+        slot_targets = []
+        
+        # Slots between blue books: positions 1, 2, ..., num_blue-1
+        # (position i means between blue[i-1] and blue[i])
+        for i in range(1, num_blue):
+            slot_positions.append(i)
+            target = (blue_heights[i - 1] + blue_heights[i]) / 2.0
+            slot_targets.append(target)
+        
+        # If we need more slots, add slots at the ends
+        # Position 0: before first blue book
+        # Position num_blue: after last blue book
+        if len(slot_positions) < num_red:
+            # Add slot before first blue book
+            slot_positions.insert(0, 0)
+            slot_targets.insert(0, blue_heights[0])  # Use first blue book height as target
+            
+            if len(slot_positions) < num_red:
+                # Add slot after last blue book
+                slot_positions.append(num_blue)
+                slot_targets.append(blue_heights[num_blue - 1])  # Use last blue book height as target
+        
+        # Ensure we have exactly num_red slots
+        if len(slot_positions) > num_red:
+            # Randomly select num_red slots for more diverse gap patterns
+            # This creates varied distributions instead of uniform spacing
+            selected_indices = sorted(random.sample(range(len(slot_positions)), num_red))
+            slot_positions = [slot_positions[i] for i in selected_indices]
+            slot_targets = [slot_targets[i] for i in selected_indices]
+        elif len(slot_positions) < num_red:
+            # This shouldn't happen with the logic above, but handle it
+            raise ValueError(f"Cannot create {num_red} slots with {num_blue} blue books")
+        
+        # Optimal assignment: minimize sum of |red_height - slot_target|
+        # Use Hungarian algorithm or brute force for small problems
+        assignment = self._optimal_assignment(red_heights, slot_targets, slot_positions)
+        
+        return assignment
+    
+    def _optimal_assignment(
+        self,
+        red_heights: List[float],
+        slot_targets: List[float],
+        slot_positions: List[int]
+    ) -> Dict[int, int]:
+        """
+        Find optimal one-to-one assignment of red books to slots.
+        
+        Minimizes: sum |red_heights[i] - slot_targets[assignment[i]]|
+        
+        Uses brute force for small problems, or a simple greedy with tie-breaking
+        for larger problems.
+        """
+        num_red = len(red_heights)
+        num_slots = len(slot_targets)
+        
+        assert num_red == num_slots, "Number of red books must equal number of slots"
+        
+        # For small problems (n <= 8), use brute force (try all permutations)
+        if num_red <= 8:
+            return self._brute_force_assignment(red_heights, slot_targets, slot_positions)
+        else:
+            # For larger problems, use a greedy approach with optimal matching
+            # Sort red books by height (stable: preserve original order for ties)
+            red_with_idx = [(i, h) for i, h in enumerate(red_heights)]
+            red_with_idx.sort(key=lambda x: (x[1], x[0]))  # Sort by height, then by index
+            
+            # Sort slots by target height (stable: prefer left slots for ties)
+            slot_with_pos = [(i, t, p) for i, (t, p) in enumerate(zip(slot_targets, slot_positions))]
+            slot_with_pos.sort(key=lambda x: (x[1], -x[2]))  # Sort by target, then by position (descending for left preference)
+            
+            # Assign: smallest red to smallest slot, etc.
+            assignment = {}
+            for (red_idx, _), (slot_idx, _, slot_pos) in zip(red_with_idx, slot_with_pos):
+                assignment[red_idx] = slot_pos
+            
+            return assignment
+    
+    def _brute_force_assignment(
+        self,
+        red_heights: List[float],
+        slot_targets: List[float],
+        slot_positions: List[int]
+    ) -> Dict[int, int]:
+        """Brute force: try all permutations to find optimal assignment."""
+        from itertools import permutations
+        
+        num = len(red_heights)
+        best_cost = float('inf')
+        best_perm = None
+        
+        # Try all permutations of slot assignments
+        for perm in permutations(range(num)):
+            cost = sum(abs(red_heights[i] - slot_targets[perm[i]]) for i in range(num))
+            if cost < best_cost:
+                best_cost = cost
+                best_perm = perm
+        
+        # Build assignment dictionary
+        assignment = {}
+        for red_idx in range(num):
+            slot_idx = best_perm[red_idx]
+            assignment[red_idx] = slot_positions[slot_idx]
+        
+        return assignment
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    #  RENDERING
+    # ══════════════════════════════════════════════════════════════════════════
+    
+    def _render_initial_state(self, blue_heights: List[float], 
+                             red_heights: List[float],
+                             insertion_indices: Dict[int, int],
+                             red_queue_order: List[int]) -> Image.Image:
+        """
+        Render initial state: blue books on shelf with gaps, red books queued on the right.
+        
+        Blue books are arranged in final order with gaps at insertion positions.
+        Red books are positioned on the right side of the shelf, on the same baseline,
+        in random order (not sorted by height) to show intelligent placement.
+        """
+        img = self.renderer.create_blank_image(bg_color=(255, 255, 255))
+        draw = ImageDraw.Draw(img)
+        
+        width, height = img.size
+        shelf_y = height - 50  # Shelf position (baseline)
+        shelf_height = 10  # Shelf thickness
+        
+        # Draw shelf (extend to right for red books)
+        draw.rectangle([0, shelf_y, width, shelf_y + shelf_height], fill=(139, 69, 19))
+        
+        book_width = 30
+        spacing = 5
+        x_start = 50
+        
+        # Build the layout structure (blue books + gaps)
+        # This structure remains constant - red books only fill gaps, don't change structure
+        all_positions = self._build_layout_structure(blue_heights, red_heights, insertion_indices)
+        
+        # Draw blue books and gaps on shelf
+        for i, (pos_type, pos_height, red_idx) in enumerate(all_positions):
+            x = x_start + i * (book_width + spacing)
+            
+            if pos_type == 'blue':
+                # Draw blue book
+                scaled_h = int(pos_height * 1.5)
+                y_top = shelf_y - scaled_h
+                draw.rectangle(
+                    [x, y_top, x + book_width, shelf_y],
+                    fill=(70, 130, 180),  # Steel blue
+                    outline=(0, 0, 0),
+                    width=2
+                )
+            # Gap: just leave blank space (no drawing, no border, no height indicator)
+            # The gap is represented only by the horizontal spacing
+        
+        # Draw red books on the right side, queued on the baseline
+        # Use random order to show that books intelligently choose their positions
+        num_blue_and_gaps = len(all_positions)
+        red_queue_x_start = x_start + num_blue_and_gaps * (book_width + spacing) + 20
+        
+        # Use provided random queue order (not sorted by height or insertion position)
+        for i, red_idx in enumerate(red_queue_order):
+            x = red_queue_x_start + i * (book_width + spacing)
+            scaled_h = int(red_heights[red_idx] * 1.5)
+            y_top = shelf_y - scaled_h  # On baseline, not floating
+            
+            draw.rectangle(
+                [x, y_top, x + book_width, shelf_y],
+                fill=(220, 20, 60),  # Crimson red
+                outline=(0, 0, 0),
+                width=2
+            )
+        
+        return img
+    
+    def _build_layout_structure(
+        self,
+        blue_heights: List[float],
+        red_heights: List[float],
+        insertion_indices: Dict[int, int]
+    ) -> List[Tuple[str, float, int]]:
+        """
+        Build the layout structure (blue books + gaps) that remains constant.
+        
+        This structure is used in both initial and final states.
+        Red books only fill existing gaps, they don't change the structure.
+        
+        Returns:
+            List of (type, height, red_idx) where type is 'blue' or 'gap'
+            red_idx is None for blue books, and the assigned red book index for gaps
+        """
+        # Sort red books by insertion position, then by height (same as initial state)
+        red_insertions = sorted(
+            insertion_indices.items(),
+            key=lambda x: (x[1], red_heights[x[0]])  # First by position, then by height (ascending)
+        )
+        
+        # Build layout: blue books + gaps at insertion positions
+        all_positions = []  # List of (type, height, red_idx) where type is 'blue' or 'gap'
+        blue_idx = 0
+        gap_idx = 0
+        
+        for pos in range(len(blue_heights) + len(red_heights)):
+            # Check if this position should be a gap (red book insertion point)
+            if gap_idx < len(red_insertions) and red_insertions[gap_idx][1] == pos:
+                red_idx = red_insertions[gap_idx][0]
+                all_positions.append(('gap', red_heights[red_idx], red_idx))
+                gap_idx += 1
+            elif blue_idx < len(blue_heights):
+                all_positions.append(('blue', blue_heights[blue_idx], None))
+                blue_idx += 1
+        
+        return all_positions
+    
+    def _render_final_state(self, blue_heights: List[float], 
+                           red_heights: List[float],
+                           insertion_indices: Dict[int, int]) -> Image.Image:
+        """
+        Render final state: red books fill the gaps.
+        
+        Uses the same layout structure as initial state, just fills gaps with red books.
+        Blue books remain in exactly the same positions.
+        """
+        img = self.renderer.create_blank_image(bg_color=(255, 255, 255))
+        draw = ImageDraw.Draw(img)
+        
+        width, height = img.size
+        shelf_y = height - 50
+        shelf_height = 10
+        
+        # Draw shelf
+        draw.rectangle([0, shelf_y, width, shelf_y + shelf_height], fill=(139, 69, 19))
+        
+        # Build the same layout structure as initial state
+        all_positions = self._build_layout_structure(blue_heights, red_heights, insertion_indices)
+        
+        # Draw all books (blue books and red books filling gaps)
+        book_width = 30
+        spacing = 5
+        x_start = 50
+        
+        for i, (pos_type, pos_height, red_idx) in enumerate(all_positions):
+            x = x_start + i * (book_width + spacing)
+            scaled_h = int(pos_height * 1.5)
+            y_top = shelf_y - scaled_h
+            
+            if pos_type == 'blue':
+                # Draw blue book (unchanged)
+                fill_color = (70, 130, 180)
+            else:
+                # Draw red book (filling gap)
+                fill_color = (220, 20, 60)
+            
+            draw.rectangle(
+                [x, y_top, x + book_width, shelf_y],
+                fill=fill_color,
+                outline=(0, 0, 0),
+                width=2
+            )
+        
+        return img
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    #  VIDEO GENERATION
+    # ══════════════════════════════════════════════════════════════════════════
     
     def _generate_video(
         self,
-        first_image: Image.Image,
-        final_image: Image.Image,
+        blue_heights: List[float],
+        red_heights: List[float],
+        insertion_indices: Dict[int, int],
         task_id: str,
-        task_data: dict
+        red_queue_order: List[int]
     ) -> str:
-        """Generate ground truth video with piece sliding and fading."""
+        """Generate animation video showing red books being inserted."""
         temp_dir = Path(tempfile.gettempdir()) / f"{self.config.domain}_videos"
         temp_dir.mkdir(parents=True, exist_ok=True)
         video_path = temp_dir / f"{task_id}_ground_truth.mp4"
         
-        # For chess, create custom animation with piece fading
-        frames = self._create_chess_animation_frames(task_data)
+        # Create animation frames
+        frames = self._create_insertion_animation_frames(
+            blue_heights, red_heights, insertion_indices, red_queue_order
+        )
         
         result = self.video_generator.create_video_from_frames(
             frames,
@@ -154,551 +594,353 @@ class TaskGenerator(BaseGenerator):
         
         return str(result) if result else None
     
-    def _create_chess_animation_frames(
+    def _create_insertion_animation_frames(
         self,
-        task_data: dict,
-        hold_frames: int = 5,
-        transition_frames: int = 25
-    ) -> list:
+        blue_heights: List[float],
+        red_heights: List[float],
+        insertion_indices: Dict[int, int],
+        red_queue_order: List[int],
+        hold_frames: int = 10,
+        transition_frames: int = 30
+    ) -> List[Image.Image]:
         """
-        Create animation frames where the moving chess piece slides across the board.
+        Create animation frames showing red books moving horizontally from right queue
+        to their assigned slots.
         
-        The piece slides smoothly from start to end position.
-        NO fading - the piece stays fully visible (100% opacity) the entire time.
+        Frame count is dynamically adjusted to ensure video duration ≤ 10 seconds.
         """
-        if not CHESS_AVAILABLE:
-            # Fallback: simple crossfade
-            start_img = self._render_board(task_data["fen"])
-            end_img = self._render_final_state(task_data)
-            return [start_img] * hold_frames + [end_img] * hold_frames
+        # Calculate number of red books
+        num_red = len(red_heights)
+        
+        # Target: max 100 frames (10 seconds at 10 fps)
+        max_frames = 100
+        
+        # Calculate frame budget
+        # Formula: initial_hold + num_red * transition + (num_red - 1) * mid_hold + final_hold ≤ max_frames
+        # We want to maintain proportions while staying within limit
+        if num_red <= 2:
+            # For 2 or fewer books, use default values (total: 85 frames for 2 books)
+            hold_frames = 10
+            transition_frames = 30
+        else:
+            # For 3+ books, dynamically adjust to fit within 100 frames
+            # Formula: 2 * hold + num_red * transition + (num_red - 1) * (hold // 2) ≤ max_frames
+            # We'll solve for hold and transition to maximize quality while staying under limit
+            
+            # Try different hold_frames values and calculate corresponding transition_frames
+            # Start with reasonable hold_frames and adjust
+            best_hold = 5
+            best_transition = 20
+            
+            # Try to find optimal values that stay within limit
+            for test_hold in range(3, 11):
+                # Calculate mid_hold (pause between insertions)
+                mid_hold = test_hold // 2
+                # Calculate available frames for transitions
+                hold_used = 2 * test_hold + (num_red - 1) * mid_hold
+                available_for_transitions = max_frames - hold_used
+                
+                if available_for_transitions > 0:
+                    test_transition = max(10, int(available_for_transitions / num_red))
+                    # Check if this combination fits
+                    total = 2 * test_hold + num_red * test_transition + (num_red - 1) * mid_hold
+                    if total <= max_frames and test_transition >= 10:
+                        # Prefer larger transition_frames for smoother animation
+                        if test_transition > best_transition or (test_transition == best_transition and test_hold > best_hold):
+                            best_hold = test_hold
+                            best_transition = test_transition
+            
+            hold_frames = best_hold
+            transition_frames = best_transition
         
         frames = []
-        fen = task_data["fen"]
-        move_uci = task_data["solution"]
         
-        # Parse the move
-        board = chess.Board(fen)
-        move = chess.Move.from_uci(move_uci)
-        from_square = move.from_square
-        to_square = move.to_square
-        moving_piece = board.piece_at(from_square)
-        
-        # Render first frame to extract the piece from
-        first_frame = self._render_board(fen)
-        
-        # Hold initial position
+        # Initial state (with gaps and red books queued on the right)
+        first_frame = self._render_initial_state(blue_heights, red_heights, insertion_indices, red_queue_order)
         for _ in range(hold_frames):
-            frames.append(first_frame)
+            frames.append(first_frame.copy())
         
-        # Create transition frames
-        board_size = self.config.image_size[0]
-        square_size = board_size // 8
+        # Sort red books by insertion position for sequential animation
+        red_insertions = sorted(insertion_indices.items(), key=lambda x: x[1])
         
-        # Calculate start and end positions in pixels
-        from_file = chess.square_file(from_square)
-        from_rank = chess.square_rank(from_square)
-        to_file = chess.square_file(to_square)
-        to_rank = chess.square_rank(to_square)
+        # Animate each red book moving from right queue to its slot
+        filled_slots = 0  # Track how many slots have been filled
         
-        # Pixel coordinates (center of square)
-        start_x = from_file * square_size + square_size // 2
-        start_y = (7 - from_rank) * square_size + square_size // 2
-        end_x = to_file * square_size + square_size // 2
-        end_y = (7 - to_rank) * square_size + square_size // 2
-        
-        # Extract piece image from first frame to ensure visual consistency
-        # This ensures the moving piece looks exactly like the piece in the initial frame
-        # Also get the center offset to ensure precise positioning
-        piece_image, center_offset = self._extract_piece_from_frame(
-            first_frame, fen, from_square, square_size, board_size
-        )
-        
-        # Pre-render final board state for precise alignment
-        board.push(move)
-        final_board_fen = board.fen()
-        final_board_image = self._render_board(final_board_fen)
-        board.pop()  # Restore to initial state
-        
-        for i in range(transition_frames):
-            progress = i / (transition_frames - 1) if transition_frames > 1 else 1.0
-            
-            # For the last frame (progress = 1.0), use the final board state directly
-            # This ensures perfect alignment with the final position
-            if progress >= 1.0:
-                frame = final_board_image
-            else:
-                # Calculate piece position (center of target square)
-                current_x = start_x + (end_x - start_x) * progress
-                current_y = start_y + (end_y - start_y) * progress
+        for red_idx, insertion_pos in red_insertions:
+            # Render frames showing this red book moving horizontally to its slot
+            for i in range(transition_frames):
+                progress = i / (transition_frames - 1) if transition_frames > 1 else 1.0
                 
-                # Render frame with pre-rendered piece at intermediate position
-                frame = self._render_frame_with_moving_piece(
-                    board, from_square, to_square, piece_image,
-                    current_x, current_y, square_size, center_offset
+                # Create frame with red book at intermediate position
+                frame = self._render_horizontal_move_frame(
+                    blue_heights, red_heights, insertion_indices,
+                    red_idx, insertion_pos, progress, filled_slots, red_queue_order
                 )
-            frames.append(frame)
+                frames.append(frame)
+            
+            filled_slots += 1
+            
+            # Hold frame after insertion (only if not all books are inserted)
+            if filled_slots < len(red_insertions):
+                # Show partial state (some slots filled)
+                partial_frame = self._render_partial_state(
+                    blue_heights, red_heights, insertion_indices, filled_slots, red_queue_order
+                )
+                for _ in range(hold_frames // 2):
+                    frames.append(partial_frame.copy())
         
-        # Hold final position (already rendered, just duplicate)
+        # Final state: all red books inserted, keep this state static
+        final_frame = self._render_final_state(blue_heights, red_heights, insertion_indices)
         for _ in range(hold_frames):
-            frames.append(final_board_image)
+            frames.append(final_frame.copy())
         
         return frames
     
-    def _render_frame_with_moving_piece(
+    def _render_horizontal_move_frame(
         self,
-        board: 'chess.Board',
-        from_square: int,
-        to_square: int,
-        piece_image: Image.Image,
-        piece_x: float,
-        piece_y: float,
-        square_size: int,
-        center_offset: tuple[int, int] = (0, 0)
+        blue_heights: List[float],
+        red_heights: List[float],
+        insertion_indices: Dict[int, int],
+        red_idx: int,
+        target_slot_pos: int,
+        progress: float,
+        filled_slots: int,
+        red_queue_order: List[int]
     ) -> Image.Image:
         """
-        Render a single frame with the pre-rendered moving piece at a specific position.
+        Render frame with red book moving horizontally from right queue to its slot.
+        
+        Uses two-stage path: slight upward lift (optional) -> horizontal move -> back to baseline.
         
         Args:
-            center_offset: (x, y) position of the original square center within the extracted image
-                         (relative to top-left corner of extracted image)
+            progress: 0.0 = in right queue, 1.0 = in target slot
+            filled_slots: Number of slots already filled
         """
-        # Create a modified board without the moving piece
-        board_copy = board.copy()
-        board_copy.remove_piece_at(from_square)
-        
-        # Render the board without the moving piece
-        base_image = self._render_board(board_copy.fen())
-        
-        # Composite the pre-rendered piece onto the board
-        result = base_image.convert('RGBA')
-        
-        # Calculate paste position: center the piece at (piece_x, piece_y)
-        # center_offset tells us where the original square center is in the extracted image
-        center_x_in_image, center_y_in_image = center_offset
-        
-        # To place the piece center at (piece_x, piece_y), offset by the center position
-        paste_x = int(piece_x - center_x_in_image)
-        paste_y = int(piece_y - center_y_in_image)
-        
-        result.paste(piece_image, (paste_x, paste_y), piece_image)
-        
-        return result.convert('RGB')
-    
-    def _render_single_piece(self, piece: 'chess.Piece', square_size: int) -> Image.Image:
-        """Render a single chess piece."""
-        img = Image.new("RGBA", (square_size, square_size), (0, 0, 0, 0))
+        img = self.renderer.create_blank_image(bg_color=(255, 255, 255))
         draw = ImageDraw.Draw(img)
         
-        font = self._get_chess_font(square_size)
+        width, height = img.size
+        shelf_y = height - 50  # Baseline
+        shelf_height = 10
+        book_width = 30
+        spacing = 5
+        x_start = 50
         
-        unicode_map = {
-            'P': '\u2659', 'N': '\u2658', 'B': '\u2657', 
-            'R': '\u2656', 'Q': '\u2655', 'K': '\u2654',
-            'p': '\u265F', 'n': '\u265E', 'b': '\u265D', 
-            'r': '\u265C', 'q': '\u265B', 'k': '\u265A',
-        }
+        # Draw shelf
+        draw.rectangle([0, shelf_y, width, shelf_y + shelf_height], fill=(139, 69, 19))
         
-        sym = piece.symbol()
-        label = unicode_map.get(sym, sym.upper())
+        # Build layout structure (same as initial/final state)
+        all_positions = self._build_layout_structure(blue_heights, red_heights, insertion_indices)
         
-        # Get text bounds for centering
-        bbox = draw.textbbox((0, 0), label, font=font)
-        w = bbox[2] - bbox[0]
-        h = bbox[3] - bbox[1]
+        # Find gap index in layout for the target red book
+        # The gap corresponding to red_idx is at a specific position in the layout
+        gap_layout_idx = None
+        for layout_idx, (pos_type, _, red_idx_at_gap) in enumerate(all_positions):
+            if pos_type == 'gap' and red_idx_at_gap == red_idx:
+                gap_layout_idx = layout_idx
+                break
         
-        x = (square_size - w) // 2
-        y = (square_size - h) // 2
+        if gap_layout_idx is None:
+            # Fallback: use target_slot_pos to find gap
+            red_insertions_sorted = sorted(
+                insertion_indices.items(),
+                key=lambda x: (x[1], red_heights[x[0]])
+            )
+            for layout_idx, (pos_type, _, red_idx_at_gap) in enumerate(all_positions):
+                if pos_type == 'gap':
+                    gap_insertion_pos = insertion_indices[red_idx_at_gap]
+                    if gap_insertion_pos == target_slot_pos:
+                        gap_layout_idx = layout_idx
+                        break
         
-        # Draw with outline for contrast
-        fill_color = (245, 245, 245) if piece.color else (20, 20, 20)
-        outline_color = (0, 0, 0) if piece.color else (255, 255, 255)
+        num_blue_and_gaps = len(all_positions)
+        red_queue_x_start = x_start + num_blue_and_gaps * (book_width + spacing) + 20
         
-        # Draw outline
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                if dx == 0 and dy == 0:
-                    continue
-                draw.text((x + dx, y + dy), label, font=font, fill=outline_color)
+        # Calculate initial and target positions for moving red book
+        red_height = red_heights[red_idx]
+        scaled_h = int(red_height * 1.5)
         
-        # Draw piece
-        draw.text((x, y), label, font=font, fill=fill_color)
+        # Find initial x position in queue (using random queue order)
+        red_queue_idx = red_queue_order.index(red_idx)
+        initial_x = red_queue_x_start + red_queue_idx * (book_width + spacing)
         
-        return img
-    
-    def _extract_piece_from_frame(
-        self,
-        frame: Image.Image,
-        fen: str,
-        square: int,
-        square_size: int,
-        board_size: int
-    ) -> Image.Image:
-        """
-        Extract a chess piece image from a rendered frame using background subtraction.
-        
-        This method renders a version of the board without the piece, then calculates
-        the difference to extract only the piece itself, removing the square background.
-        
-        Args:
-            frame: The rendered board image with the piece
-            fen: The FEN string of the board position
-            square: The square index (0-63) where the piece is located
-            square_size: Size of each square in pixels
-            board_size: Total board size in pixels
-            
-        Returns:
-            Extracted piece image with RGBA format, background set to transparent
-        """
-        # Calculate square boundaries with padding
-        from_file = chess.square_file(square)
-        from_rank = chess.square_rank(square)
-        
-        # Add padding to ensure we capture the entire piece including anti-aliasing
-        padding = max(2, square_size // 8)  # At least 2 pixels, or 1/8 of square size
-        
-        # Calculate pixel coordinates
-        left = from_file * square_size
-        top = (7 - from_rank) * square_size
-        right = left + square_size
-        bottom = top + square_size
-        
-        # Apply padding with bounds checking
-        left_padded = max(0, left - padding)
-        top_padded = max(0, top - padding)
-        right_padded = min(board_size, right + padding)
-        bottom_padded = min(board_size, bottom + padding)
-        
-        # Crop the square region from the frame with piece
-        square_with_piece = frame.crop((left_padded, top_padded, right_padded, bottom_padded))
-        square_with_piece = square_with_piece.convert('RGB')
-        
-        # Render the board without the piece at this square
-        board = chess.Board(fen)
-        board_copy = board.copy()
-        board_copy.set_piece_at(square, None)  # Remove the piece
-        empty_frame = self._render_board(board_copy.fen())
-        
-        # Crop the same square region from the empty board
-        square_without_piece = empty_frame.crop((left_padded, top_padded, right_padded, bottom_padded))
-        square_without_piece = square_without_piece.convert('RGB')
-        
-        # Calculate the difference between the two images
-        # This will highlight only the piece pixels
-        diff = ImageChops.difference(square_with_piece, square_without_piece)
-        
-        # Convert difference to grayscale for thresholding
-        diff_gray = diff.convert('L')
-        
-        # Create a mask: pixels with significant difference are part of the piece
-        # Use a threshold to handle anti-aliasing and slight rendering differences
-        threshold = 10  # Minimum difference to consider as piece pixel
-        
-        # Apply threshold using point operation: values > threshold become 255, else 0
-        def threshold_func(x):
-            return 255 if x > threshold else 0
-        
-        mask = diff_gray.point(threshold_func, mode='L')
-        
-        # Apply morphological operations to clean up the mask
-        # This helps remove noise and fill small gaps
-        # Slight dilation to capture anti-aliased edges
-        mask = mask.filter(ImageFilter.MaxFilter(size=3))
-        # Slight erosion to remove noise (size must be odd: 3, 5, 7, etc.)
-        mask = mask.filter(ImageFilter.MinFilter(size=3))
-        
-        # Convert the piece square to RGBA
-        piece_rgba = square_with_piece.convert('RGBA')
-        
-        # Apply the mask as alpha channel
-        # Pixels with no difference (background) become transparent
-        alpha = mask.split()[0] if mask.mode == 'L' else mask
-        piece_rgba.putalpha(alpha)
-        
-        # Calculate the position of the original square center within the extracted image
-        # Original square center in board coordinates: (left + square_size // 2, top + square_size // 2)
-        # In extracted image coordinates (relative to top-left of extracted image):
-        original_center_x_in_image = (left + square_size // 2) - left_padded
-        original_center_y_in_image = (top + square_size // 2) - top_padded
-        
-        # Return the piece image and the center position for precise positioning
-        center_offset = (original_center_x_in_image, original_center_y_in_image)
-        
-        return piece_rgba, center_offset
-    
-    # ══════════════════════════════════════════════════════════════════════════
-    #  CHESS GENERATION HELPERS
-    # ══════════════════════════════════════════════════════════════════════════
-    
-    def _gen_back_rank_mate(self) -> dict:
-        """Generate back-rank mate pattern."""
-        fens = [
-            "7k/5ppp/8/8/8/8/8/R6K w - - 0 1",
-            "7k/6pp/8/8/8/8/8/Q6K w - - 0 1",
-            "6k1/5ppp/8/8/8/8/8/R6K w - - 0 1",
-        ]
-        
-        fen = random.choice(fens)
-        board = chess.Board(fen)
-        
-        for move in board.legal_moves:
-            board.push(move)
-            if board.is_checkmate():
-                solution = board.pop().uci()
-                return {
-                    "fen": fen,
-                    "solution": solution,
-                    "type": "back_rank",
-                    "difficulty": "easy",
-                }
-            board.pop()
-        
-        return None
-    
-    def _gen_queen_mate(self) -> dict:
-        """Generate queen mate pattern."""
-        fens = [
-            "7k/8/6K1/5Q2/8/8/8/8 w - - 0 1",
-            "7k/8/5K2/8/4Q3/8/8/8 w - - 0 1",
-        ]
-        
-        fen = random.choice(fens)
-        board = chess.Board(fen)
-        
-        for move in board.legal_moves:
-            board.push(move)
-            if board.is_checkmate():
-                solution = board.pop().uci()
-                return {
-                    "fen": fen,
-                    "solution": solution,
-                    "type": "queen_mate",
-                    "difficulty": "easy",
-                }
-            board.pop()
-        
-        return None
-    
-    def _gen_rook_mate(self) -> dict:
-        """Generate rook mate pattern."""
-        fens = [
-            "7k/8/5K2/8/8/8/8/R7 w - - 0 1",
-            "7k/8/6K1/8/8/8/8/7R w - - 0 1",
-        ]
-        
-        fen = random.choice(fens)
-        board = chess.Board(fen)
-        
-        for move in board.legal_moves:
-            board.push(move)
-            if board.is_checkmate():
-                solution = board.pop().uci()
-                return {
-                    "fen": fen,
-                    "solution": solution,
-                    "type": "rook_mate",
-                    "difficulty": "easy",
-                }
-            board.pop()
-        
-        return None
-    
-    def _validate_mate(self, position: dict) -> bool:
-        """Validate that the position is a valid mate-in-1."""
-        if not position:
-            return False
-        
-        board = chess.Board(position["fen"])
-        move = chess.Move.from_uci(position["solution"])
-        
-        if move not in board.legal_moves:
-            return False
-        
-        board.push(move)
-        return board.is_checkmate()
-    
-    # ══════════════════════════════════════════════════════════════════════════
-    #  BOARD RENDERING
-    # ══════════════════════════════════════════════════════════════════════════
-    
-    def _render_board(self, fen: str) -> Image.Image:
-        """
-        Render chess board from FEN string.
-        
-        Uses chess.svg + cairosvg for best quality, falls back to PIL rendering.
-        """
-        board_size = self.config.image_size[0]
-        
-        # Method 1: Use chess.svg + cairosvg for high quality
-        if CHESS_AVAILABLE and CAIROSVG_AVAILABLE:
-            board = chess.Board(fen)
-            svg_content = chess.svg.board(board=board, size=board_size)
-            
-            # Convert SVG to PNG via cairosvg
-            import io
-            png_data = cairosvg.svg2png(bytestring=svg_content.encode('utf-8'))
-            return Image.open(io.BytesIO(png_data)).convert('RGB')
-        
-        # Method 2: PIL-based rendering (fallback)
-        return self._render_board_pil(fen, board_size)
-    
-    def _render_board_pil(self, fen: str, board_size: int = 400) -> Image.Image:
-        """
-        Render chess board using PIL (fallback implementation).
-        """
-        img = Image.new("RGB", (board_size, board_size), color="white")
-        draw = ImageDraw.Draw(img)
-        
-        square_px = board_size // 8
-        light = (240, 217, 181)
-        dark = (181, 136, 99)
-        
-        # Load font for chess pieces
-        font = self._get_chess_font(square_px)
-        
-        # Draw squares
-        for rank in range(8):
-            for file_idx in range(8):
-                x0 = file_idx * square_px
-                y0 = (7 - rank) * square_px  # rank 0 at bottom
-                color = light if (rank + file_idx) % 2 == 0 else dark
-                draw.rectangle([x0, y0, x0 + square_px, y0 + square_px], fill=color)
-        
-        # Unicode chess piece glyphs
-        unicode_map = {
-            'P': '\u2659', 'N': '\u2658', 'B': '\u2657', 
-            'R': '\u2656', 'Q': '\u2655', 'K': '\u2654',
-            'p': '\u265F', 'n': '\u265E', 'b': '\u265D', 
-            'r': '\u265C', 'q': '\u265B', 'k': '\u265A',
-        }
-        
-        # Draw pieces
-        if CHESS_AVAILABLE:
-            board = chess.Board(fen)
-            piece_map = board.piece_map()
-            
-            for sq, piece in piece_map.items():
-                file_idx = chess.square_file(sq)
-                rank = chess.square_rank(sq)
-                x_center = file_idx * square_px + square_px // 2
-                y_center = (7 - rank) * square_px + square_px // 2
-                
-                sym = piece.symbol()
-                label = unicode_map.get(sym, sym.upper())
-                
-                # Get text bounds for centering
-                bbox = draw.textbbox((0, 0), label, font=font)
-                w = bbox[2] - bbox[0]
-                h = bbox[3] - bbox[1]
-                
-                x = x_center - w / 2
-                y = y_center - h / 2
-                
-                # Draw with outline for contrast
-                fill_color = (245, 245, 245) if piece.color else (20, 20, 20)
-                outline_color = (0, 0, 0) if piece.color else (255, 255, 255)
-                
-                # Draw outline
-                for dx in (-1, 0, 1):
-                    for dy in (-1, 0, 1):
-                        if dx == 0 and dy == 0:
-                            continue
-                        draw.text((x + dx, y + dy), label, font=font, fill=outline_color)
-                
-                # Draw piece
-                draw.text((x, y), label, font=font, fill=fill_color)
+        # Find target x position (gap position in layout)
+        # Use gap_layout_idx if found, otherwise fall back to target_slot_pos
+        if gap_layout_idx is not None:
+            target_x = x_start + gap_layout_idx * (book_width + spacing)
         else:
-            self._draw_pieces_from_fen_pil(draw, fen, square_px, font, unicode_map)
+            # Fallback: use target_slot_pos
+            target_x = x_start + target_slot_pos * (book_width + spacing)
+        
+        # Two-stage movement: slight lift -> horizontal -> back down
+        lift_height = 10  # Pixels to lift
+        if progress < 0.2:
+            # Stage 1: Lift up slightly
+            lift_progress = progress / 0.2
+            current_y = shelf_y - scaled_h - lift_progress * lift_height
+            current_x = initial_x
+        elif progress < 0.8:
+            # Stage 2: Horizontal movement
+            move_progress = (progress - 0.2) / 0.6
+            current_x = initial_x + (target_x - initial_x) * move_progress
+            current_y = shelf_y - scaled_h - lift_height  # Stay lifted
+        else:
+            # Stage 3: Drop back to baseline
+            drop_progress = (progress - 0.8) / 0.2
+            current_x = target_x
+            current_y = shelf_y - scaled_h - lift_height * (1 - drop_progress)
+        
+        # Draw blue books and gaps (using same layout structure)
+        red_insertions_sorted = sorted(
+            insertion_indices.items(),
+            key=lambda x: (x[1], red_heights[x[0]])
+        )
+        
+        for i, (pos_type, pos_height, gap_red_idx) in enumerate(all_positions):
+            x = x_start + i * (book_width + spacing)
+            
+            if pos_type == 'blue':
+                # Draw blue book
+                scaled_h_blue = int(pos_height * 1.5)
+                y_top = shelf_y - scaled_h_blue
+                draw.rectangle(
+                    [x, y_top, x + book_width, shelf_y],
+                    fill=(70, 130, 180),
+                    outline=(0, 0, 0),
+                    width=2
+                )
+            else:
+                # This is a gap position
+                if gap_red_idx in [r[0] for r in red_insertions_sorted[:filled_slots]]:
+                    # This gap is already filled with red book
+                    scaled_h_gap = int(pos_height * 1.5)
+                    gap_y_top = shelf_y - scaled_h_gap
+                    draw.rectangle(
+                        [x, gap_y_top, x + book_width, shelf_y],
+                        fill=(220, 20, 60),
+                        outline=(0, 0, 0),
+                        width=2
+                    )
+                # Empty gap: just leave blank space (no drawing, no border, no height indicator)
+                # The gap is represented only by the horizontal spacing
+        
+        # Draw red books still in queue (excluding the one currently moving)
+        # Use random queue order to maintain consistency with initial state
+        for i, queue_red_idx in enumerate(red_queue_order):
+            if queue_red_idx == red_idx:
+                continue  # Skip the moving book
+            
+            # Check if this book has already been placed
+            if queue_red_idx in [r[0] for r in red_insertions_sorted[:filled_slots]]:
+                continue  # Already placed
+            
+            x = red_queue_x_start + i * (book_width + spacing)
+            queue_red_height = red_heights[queue_red_idx]
+            queue_scaled_h = int(queue_red_height * 1.5)
+            y_top = shelf_y - queue_scaled_h
+            
+            draw.rectangle(
+                [x, y_top, x + book_width, shelf_y],
+                fill=(220, 20, 60),
+                outline=(0, 0, 0),
+                width=2
+            )
+        
+        # Draw moving red book
+        draw.rectangle(
+            [int(current_x), int(current_y), int(current_x) + book_width, int(current_y) + scaled_h],
+            fill=(220, 20, 60),
+            outline=(0, 0, 0),
+            width=2
+        )
         
         return img
     
-    def _get_chess_font(self, square_px: int) -> ImageFont.FreeTypeFont:
-        """Get a font for rendering chess pieces."""
-        font_size = int(square_px * 0.75)
-        
-        # Try common fonts that support chess Unicode glyphs
-        font_names = [
-            "DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-            "/Library/Fonts/Arial Unicode.ttf",
-            "Arial Unicode.ttf",
-            "Segoe UI Symbol",
-        ]
-        
-        for font_name in font_names:
-            try:
-                return ImageFont.truetype(font_name, font_size)
-            except (OSError, IOError):
-                continue
-        
-        # Fallback to default
-        return ImageFont.load_default()
-    
-    def _draw_pieces_from_fen_pil(
+    def _render_partial_state(
         self,
-        draw: ImageDraw.Draw,
-        fen: str,
-        square_px: int,
-        font: ImageFont.FreeTypeFont,
-        unicode_map: dict
-    ) -> None:
-        """Draw pieces from FEN when chess library is not available."""
-        board_fen = fen.split()[0]
-        ranks = board_fen.split('/')
+        blue_heights: List[float],
+        red_heights: List[float],
+        insertion_indices: Dict[int, int],
+        filled_slots: int,
+        red_queue_order: List[int]
+    ) -> Image.Image:
+        """
+        Render partial state with some slots filled, red books still queued on right.
         
-        for rank_idx, rank_str in enumerate(ranks):
-            file_idx = 0
-            for char in rank_str:
-                if char.isdigit():
-                    file_idx += int(char)
-                elif char in unicode_map:
-                    x_center = file_idx * square_px + square_px // 2
-                    y_center = rank_idx * square_px + square_px // 2
-                    
-                    label = unicode_map[char]
-                    bbox = draw.textbbox((0, 0), label, font=font)
-                    w = bbox[2] - bbox[0]
-                    h = bbox[3] - bbox[1]
-                    
-                    x = x_center - w / 2
-                    y = y_center - h / 2
-                    
-                    # White pieces are uppercase
-                    is_white = char.isupper()
-                    fill_color = (245, 245, 245) if is_white else (20, 20, 20)
-                    outline_color = (0, 0, 0) if is_white else (255, 255, 255)
-                    
-                    for dx in (-1, 0, 1):
-                        for dy in (-1, 0, 1):
-                            if dx == 0 and dy == 0:
-                                continue
-                            draw.text((x + dx, y + dy), label, font=font, fill=outline_color)
-                    
-                    draw.text((x, y), label, font=font, fill=fill_color)
-                    file_idx += 1
-    
-    def _get_fallback_templates(self) -> list:
-        """Fallback templates when chess library not available."""
-        return [
-            {
-                "fen": "7k/5ppp/8/8/8/8/8/R6K w - - 0 1",
-                "final_fen": "R6k/5ppp/8/8/8/8/8/7K b - - 1 1",  # Rook on a8, checkmate
-                "solution": "a1a8",
-                "type": "back_rank",
-                "difficulty": "easy"
-            },
-            {
-                "fen": "7k/8/6K1/5Q2/8/8/8/8 w - - 0 1",
-                "final_fen": "7k/6Q1/6K1/8/8/8/8/8 b - - 1 1",  # Queen on g7, checkmate
-                "solution": "f5g7",
-                "type": "queen_mate",
-                "difficulty": "easy"
-            },
-            {
-                "fen": "7k/8/5K2/8/8/8/8/R7 w - - 0 1",
-                "final_fen": "7k/8/5K2/8/8/8/8/7R b - - 1 1",  # Rook on h1, checkmate
-                "solution": "a1h1",
-                "type": "rook_mate",
-                "difficulty": "easy"
-            },
-        ]
+        Args:
+            filled_slots: Number of slots that have been filled so far
+        """
+        img = self.renderer.create_blank_image(bg_color=(255, 255, 255))
+        draw = ImageDraw.Draw(img)
+        
+        width, height = img.size
+        shelf_y = height - 50  # Baseline
+        shelf_height = 10
+        book_width = 30
+        spacing = 5
+        x_start = 50
+        
+        # Draw shelf
+        draw.rectangle([0, shelf_y, width, shelf_y + shelf_height], fill=(139, 69, 19))
+        
+        # Build layout structure (same as initial/final state)
+        all_positions = self._build_layout_structure(blue_heights, red_heights, insertion_indices)
+        
+        num_blue_and_gaps = len(all_positions)
+        red_queue_x_start = x_start + num_blue_and_gaps * (book_width + spacing) + 20
+        
+        # Sort red books to determine which gaps are filled
+        red_insertions_sorted = sorted(
+            insertion_indices.items(),
+            key=lambda x: (x[1], red_heights[x[0]])
+        )
+        filled_red_indices = set(r[0] for r in red_insertions_sorted[:filled_slots])
+        
+        # Draw blue books and gaps
+        for i, (pos_type, pos_height, gap_red_idx) in enumerate(all_positions):
+            x = x_start + i * (book_width + spacing)
+            
+            if pos_type == 'blue':
+                # Draw blue book (unchanged)
+                scaled_h = int(pos_height * 1.5)
+                y_top = shelf_y - scaled_h
+                draw.rectangle(
+                    [x, y_top, x + book_width, shelf_y],
+                    fill=(70, 130, 180),
+                    outline=(0, 0, 0),
+                    width=2
+                )
+            else:
+                # This is a gap position
+                if gap_red_idx in filled_red_indices:
+                    # Gap is filled with red book
+                    scaled_h = int(pos_height * 1.5)
+                    gap_y_top = shelf_y - scaled_h
+                    draw.rectangle(
+                        [x, gap_y_top, x + book_width, shelf_y],
+                        fill=(220, 20, 60),
+                        outline=(0, 0, 0),
+                        width=2
+                    )
+                # Empty gap: just leave blank space (no drawing, no border, no height indicator)
+                # The gap is represented only by the horizontal spacing
+        
+        # Draw red books still in queue (using random queue order)
+        for i, queue_red_idx in enumerate(red_queue_order):
+            # Check if this book has already been placed
+            if queue_red_idx in filled_red_indices:
+                continue  # Already placed
+            
+            x = red_queue_x_start + i * (book_width + spacing)
+            queue_red_height = red_heights[queue_red_idx]
+            queue_scaled_h = int(queue_red_height * 1.5)
+            y_top = shelf_y - queue_scaled_h
+            
+            draw.rectangle(
+                [x, y_top, x + book_width, shelf_y],
+                fill=(220, 20, 60),
+                outline=(0, 0, 0),
+                width=2
+            )
+        
+        return img

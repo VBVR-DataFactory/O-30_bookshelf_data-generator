@@ -1,6 +1,6 @@
-# Template Data Generator 🎲
+# Bookshelf Insertion Task Generator 📚
 
-A minimal template for creating synthetic reasoning task generators. Fork this and customize it for your own task (maze, sudoku, rotation, etc.).
+A data generator for creating synthetic reasoning tasks involving book insertion on a bookshelf. This generator creates tasks where red books need to be intelligently inserted into gaps between blue books based on height clustering and matching.
 
 ---
 
@@ -8,8 +8,8 @@ A minimal template for creating synthetic reasoning task generators. Fork this a
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-org/your-task-generator.git
-cd your-task-generator
+git clone https://github.com/your-org/bookshelf-task-generator.git
+cd bookshelf-task-generator
 
 # 2. Create and activate virtual environment
 python3 -m venv venv
@@ -26,114 +26,164 @@ python examples/generate.py --num-samples 50
 
 ---
 
-## 📁 Structure
+## 📋 Task Description
+
+The **Bookshelf Insertion Task** requires determining where to insert red books into a shelf of blue books:
+
+1. **Blue books** (existing): Arranged left-to-right on a shelf, forming height-based clusters
+   - Two adjacent blue books belong to the same cluster if their height difference ≤ `eps`
+   - Each cluster has a representative height (mean of cluster members)
+
+2. **Red books** (to insert): Need to be inserted into gaps between blue books
+   - Each red book is assigned to the cluster whose representative height is closest
+   - Red books are inserted at the end of their assigned cluster
+   - If multiple red books target the same position, they are sorted by height (ascending)
+
+3. **Output**: The insertion index (0-based position) for each red book
+
+---
+
+## 📁 Project Structure
 
 ```
 template-data-generator/
-├── core/                    # ✅ KEEP: Standard utilities
+├── core/                    # ✅ Framework utilities (DO NOT MODIFY)
 │   ├── base_generator.py   # Abstract base class
-│   ├── schemas.py          # Pydantic models
-│   ├── image_utils.py      # Image helpers
-│   ├── video_utils.py      # Video generation
-│   └── output_writer.py    # File output
-├── src/                     # ⚠️ CUSTOMIZE: Your task logic
-│   ├── generator.py        # Your task generator
-│   ├── prompts.py          # Your prompt templates
-│   └── config.py           # Your configuration
+│   ├── schemas.py          # Pydantic models (TaskPair)
+│   ├── image_utils.py      # Image rendering helpers
+│   ├── video_utils.py      # Video generation utilities
+│   └── output_writer.py    # File output handler
+├── src/                     # ⚠️ Task-specific implementation
+│   ├── generator.py        # Bookshelf task generator
+│   ├── prompts.py          # Task prompt templates
+│   └── config.py           # Task configuration (TaskConfig)
 ├── examples/
-│   └── generate.py         # Entry point
-└── data/questions/         # Generated output
+│   └── generate.py         # Entry point script
+└── data/                    # Generated output
+    └── {domain}_task/       # e.g., bookshelf_task/
+        └── {task_id}/       # e.g., bookshelf_0000/
 ```
 
 ---
 
 ## 📦 Output Format
 
-Every generator produces:
+Each generated task produces the following files:
 
 ```
-data/questions/{domain}_task/{task_id}/
-├── first_frame.png          # Initial state (REQUIRED)
-├── final_frame.png          # Goal state (or goal.txt)
-├── prompt.txt               # Instructions (REQUIRED)
-└── ground_truth.mp4         # Solution video (OPTIONAL)
+data/{domain}_task/{task_id}/
+├── first_frame.png          # Initial state: blue books with gaps, red books queued on right
+├── final_frame.png          # Final state: red books inserted into gaps
+├── prompt.txt               # Task instructions (REQUIRED)
+├── insertion_indices.txt    # Mapping: red book index -> insertion position (0-based)
+└── ground_truth.mp4         # Animation video showing insertion process (OPTIONAL)
+```
+
+### Example `insertion_indices.txt`:
+```
+Red book index -> Insertion position (0-based)
+==================================================
+Red book 0: insert at position 1
+Red book 1: insert at position 3
+Red book 2: insert at position 4
 ```
 
 ---
 
-## 🎨 Customization (3 Files to Modify)
+## 🎨 Task Implementation
 
-### 1. Update `src/generator.py`
+### Core Algorithm
 
-Replace the example chess generator with your task:
+1. **Generate blue book heights** with clustering structure (2-4 groups)
+2. **Calculate slot positions** (gaps between blue books)
+3. **Generate red book heights** from adjacent blue books
+4. **Optimal assignment**: Match red books to slots using height-based matching
+   - Minimizes: `sum |red_height - slot_target_height|`
+   - Uses brute force for small problems (n ≤ 8), greedy for larger ones
+5. **Render images**: Initial state (with gaps) and final state (filled)
+6. **Generate video** (optional): Animated insertion sequence
 
-```python
-from core import BaseGenerator, TaskPair, ImageRenderer
+### Key Features
 
-class MazeGenerator(BaseGenerator):
-    def __init__(self, config):
-        super().__init__(config)
-        self.renderer = ImageRenderer(config.image_size)
-    
-    def generate_task_pair(self, task_id: str) -> TaskPair:
-        # 1. Generate your problem
-        maze = self.create_maze()
-        
-        # 2. Solve it
-        solution = self.solve_maze(maze)
-        
-        # 3. Render images
-        first_image = self.render_maze(maze)
-        final_image = self.render_maze_with_solution(maze, solution)
-        
-        # 4. Create TaskPair
-        return TaskPair(
-            task_id=task_id,
-            domain=self.config.domain,
-            prompt=self.select_prompt(),
-            first_image=first_image,
-            final_image=final_image,
-            ground_truth_video=None  # Optional
-        )
-```
+- **Height-based clustering**: Blue books form natural clusters based on adjacent height differences
+- **Optimal matching**: Red books are assigned to slots using optimal assignment algorithm
+- **Visual consistency**: Same layout structure in initial and final states (red books only fill gaps)
+- **Animation support**: Smooth horizontal movement with lift/drop transitions
 
-### 2. Update `src/prompts.py`
+---
 
-Replace chess prompts with yours:
+## ⚙️ Configuration
+
+All hyperparameters are defined in `src/config.py`:
 
 ```python
-PROMPTS = {
-    "default": [
-        "Animate a path from start to goal through the maze.",
-        "Show the solution route navigating through corridors.",
-    ]
-}
-
-def get_prompt(task_type: str = "default") -> str:
-    prompts = PROMPTS.get(task_type, PROMPTS["default"])
-    return random.choice(prompts)
-```
-
-### 3. Update `src/config.py`
-
-**All hyperparameters go here** - both general and task-specific:
-
-```python
-from core import GenerationConfig
-from pydantic import Field
-
 class TaskConfig(GenerationConfig):
-    """Your task-specific configuration."""
-    # Inherits: num_samples, domain, seed, output_dir, image_size
+    # Domain and image settings
+    domain: str = "bookshelf"
+    image_size: tuple[int, int] = (800, 400)
     
-    # Override defaults
-    domain: str = Field(default="maze")
-    image_size: tuple[int, int] = Field(default=(512, 512))
+    # Video settings
+    generate_videos: bool = True
+    video_fps: int = 10
     
-    # Task-specific hyperparameters
-    grid_size: int = Field(default=10, description="Maze grid size")
-    wall_thickness: int = Field(default=2, description="Wall thickness")
-    difficulty: str = Field(default="medium", description="easy/medium/hard")
+    # Task-specific parameters
+    num_blue_books: int = 10        # Number of existing blue books
+    num_red_books: int = 3          # Number of red books to insert (varies: 2-5)
+    eps: Optional[float] = None     # Clustering threshold (auto: 0.05 * median)
+    min_book_height: float = 50.0   # Minimum book height
+    max_book_height: float = 200.0  # Maximum book height
 ```
 
-**Single entry point:** `python examples/generate.py --num-samples 50`
+---
+
+## 🎯 Usage Examples
+
+### Basic generation
+```bash
+python examples/generate.py --num-samples 100
+```
+
+### Custom output directory
+```bash
+python examples/generate.py --num-samples 50 --output data/my_task
+```
+
+### With random seed (for reproducibility)
+```bash
+python examples/generate.py --num-samples 100 --seed 42
+```
+
+### Without video generation (faster)
+```bash
+python examples/generate.py --num-samples 100 --no-videos
+```
+
+---
+
+## 🔧 Dependencies
+
+- **numpy**: Numerical computations
+- **Pillow**: Image rendering
+- **pydantic**: Data validation and configuration
+- **opencv-python**: Video generation (optional, for ground truth videos)
+
+See `requirements.txt` for specific versions.
+
+---
+
+## 📝 Customization
+
+To adapt this generator for a different task:
+
+1. **Modify `src/generator.py`**: Implement your task generation logic
+2. **Update `src/prompts.py`**: Define task-specific prompts
+3. **Adjust `src/config.py`**: Add your task's hyperparameters
+4. **Update `core/schemas.py`**: Extend `TaskPair` if needed (e.g., `insertion_indices`)
+
+The core framework (`core/`) is designed to be task-agnostic and should not be modified.
+
+---
+
+## 📄 License
+
+See `LICENSE` file for details.

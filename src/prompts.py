@@ -16,24 +16,9 @@ import random
 
 PROMPTS = {
     "default": [
-        "Animate the chess pieces to show white delivering checkmate in one move. The winning piece should move smoothly to its destination square, capturing if necessary, resulting in the opponent's king being in checkmate.",
-        "Show white making the winning move that checkmates black. The piece should move clearly from its starting position to deliver mate, with smooth animation.",
-        "Demonstrate white's checkmate in one. Move the attacking piece to its final square, showing the decisive blow that ends the game.",
-    ],
-    
-    "back_rank": [
-        "Show the rook or queen delivering a back-rank checkmate. The attacking piece should slide horizontally along the back rank to trap the enemy king.",
-        "Animate a classic back-rank mate. The attacking piece moves along the eighth rank to checkmate the trapped king behind its own pawns.",
-    ],
-    
-    "queen_mate": [
-        "Show the queen delivering checkmate. The queen should move decisively to its final square, supported by the king, to trap the opponent's king.",
-        "Animate the queen administering checkmate. She should glide to her destination, working with the friendly king to corner the enemy monarch.",
-    ],
-    
-    "rook_mate": [
-        "Show the rook delivering checkmate. The rook should move cleanly along its file or rank to trap the enemy king.",
-        "Animate the rook administering mate. It should slide smoothly to its destination square, cutting off the king's escape.",
+        "You have a bookshelf with blue books (already placed) and red books (to be inserted). Each blue book has a height, and they are arranged from left to right. Blue books are clustered by height: if two adjacent blue books have similar heights (their height difference is small), they belong to the same cluster. For each red book, find the blue book cluster whose representative height (average of all books in that cluster) is closest to the red book's height. Insert each red book at the end of its assigned cluster. If multiple red books are assigned to the same position, insert them in order of increasing height. Output the insertion index (0-based position) for each red book.",
+        "Given a row of blue books (existing books on shelf) and red books (to insert), determine where each red book should be inserted. Blue books form clusters based on adjacent height differences: adjacent books with similar heights belong to the same cluster. Each cluster has a representative height (mean of all books in that cluster). Assign each red book to the cluster with the nearest representative height, and insert it at the end of that cluster. If multiple red books target the same position, insert them sorted by height (ascending). Output the 0-based insertion index for each red book.",
+        "A bookshelf contains blue books arranged left to right. Blue books are grouped into clusters where adjacent books with similar heights form a cluster. Red books need to be inserted. For each red book, find the cluster whose average height (mean of all books in that cluster) is closest to the red book's height, and insert the red book at the end of that cluster. If multiple red books target the same position, insert them sorted by height (ascending). Provide the insertion index (0-based position) for each red book.",
     ],
 }
 

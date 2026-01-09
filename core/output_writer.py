@@ -2,7 +2,7 @@
 
 import shutil
 from pathlib import Path
-from typing import List
+from typing import List, Dict
 from .schemas import TaskPair
 from .image_utils import ImageRenderer
 
@@ -28,6 +28,11 @@ class OutputWriter:
         # Write prompt
         (task_dir / "prompt.txt").write_text(task_pair.prompt)
         
+        # Write insertion indices if provided (required for bookshelf task)
+        if task_pair.insertion_indices is not None:
+            indices_text = self._format_insertion_indices(task_pair.insertion_indices)
+            (task_dir / "insertion_indices.txt").write_text(indices_text)
+        
         # Write video if provided (preserve original extension)
         if task_pair.ground_truth_video and Path(task_pair.ground_truth_video).exists():
             video_src = Path(task_pair.ground_truth_video)
@@ -35,6 +40,14 @@ class OutputWriter:
             shutil.copy(video_src, task_dir / f"ground_truth{video_ext}")
         
         return task_dir
+    
+    def _format_insertion_indices(self, indices: Dict[int, int]) -> str:
+        """Format insertion indices as text output."""
+        lines = ["Red book index -> Insertion position (0-based)", "=" * 50]
+        for red_idx in sorted(indices.keys()):
+            insertion_pos = indices[red_idx]
+            lines.append(f"Red book {red_idx}: insert at position {insertion_pos}")
+        return "\n".join(lines)
     
     def write_dataset(self, task_pairs: List[TaskPair]) -> Path:
         """Write all tasks to disk."""
