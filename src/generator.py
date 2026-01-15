@@ -1107,11 +1107,12 @@ class TaskGenerator(BaseGenerator):
         draw = ImageDraw.Draw(img)
         
         width, height = img.size
-        shelf_y = height - 50  # Baseline
-        shelf_height = 10
-        book_width = 30
-        spacing = 5
-        x_start = 50
+        # Scale parameters for 1024x1024 (from 800x400 base)
+        scale_factor = width / 800.0  # Scale based on width
+        shelf_y = height - int(50 * scale_factor)  # Baseline
+        shelf_height = int(10 * scale_factor)
+        spacing = int(5 * scale_factor)  # Scaled spacing
+        x_start = int(50 * scale_factor)  # Scaled start position
         
         # Extract colors and properties
         existing_color, _ = color_scheme['existing']
@@ -1126,7 +1127,7 @@ class TaskGenerator(BaseGenerator):
         all_positions = self._build_layout_structure(blue_heights, red_heights, insertion_indices)
         
         num_blue_and_gaps = len(all_positions)
-        red_queue_x_start = x_start + num_blue_and_gaps * (book_width + spacing) + 20
+        red_queue_x_start = x_start + num_blue_and_gaps * (book_width + spacing) + int(20 * scale_factor)
         
         # Sort red books to determine which gaps are filled
         red_insertions_sorted = sorted(
