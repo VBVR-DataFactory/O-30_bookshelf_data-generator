@@ -738,51 +738,71 @@ class TaskGenerator(BaseGenerator):
         Create animation frames showing red books moving horizontally from right queue
         to their assigned slots.
         
-        Frame count is dynamically adjusted to ensure video duration ≤ 10 seconds.
+        Frame count is dynamically adjusted to ensure video duration ≈ 5 seconds.
         """
         # Calculate number of red books
         num_red = len(red_heights)
         
-        # Target: max 100 frames (10 seconds at 10 fps)
-        max_frames = 100
+        # Target: ~50 frames (5 seconds at 10 fps)
+        # Reserve 0.5 seconds (5 frames) for final hold to ensure task completion is visible
+        target_duration = 5.0  # seconds
+        target_fps = self.config.video_fps
+        target_total_frames = int(target_duration * target_fps)  # ~50 frames
+        final_hold_frames = max(5, int(0.5 * target_fps))  # 0.5 seconds for final hold
         
-        # Calculate frame budget
-        # Formula: initial_hold + num_red * transition + (num_red - 1) * mid_hold + final_hold ≤ max_frames
-        # We want to maintain proportions while staying within limit
-        if num_red <= 2:
-            # For 2 or fewer books, use default values (total: 85 frames for 2 books)
-            hold_frames = 10
-            transition_frames = 30
+        # Calculate frame budget for animation (excluding final hold)
+        animation_budget = target_total_frames - final_hold_frames
+        
+        # Calculate frame allocation:
+        # initial_hold + num_red * transition + (num_red - 1) * mid_hold ≤ animation_budget
+        # We want to maintain smooth animation while staying within limit
+        
+        # Minimum values for smooth animation
+        min_initial_hold = 3
+        min_transition = 8
+        min_mid_hold = 2
+        
+        # Try to find optimal values that fit within budget
+        best_initial_hold = min_initial_hold
+        best_transition = min_transition
+        best_mid_hold = min_mid_hold
+        
+        # Calculate required frames for minimum values
+        min_required = min_initial_hold + num_red * min_transition + (num_red - 1) * min_mid_hold
+        
+        if min_required <= animation_budget:
+            # We have budget, try to maximize quality
+            # Allocate proportionally: transitions get most frames, then holds
+            remaining_budget = animation_budget - min_required
+            
+            # Allocate extra frames proportionally
+            # Give 60% to transitions, 20% to initial hold, 20% to mid holds
+            extra_transition = int(remaining_budget * 0.6 / num_red) if num_red > 0 else 0
+            extra_initial_hold = int(remaining_budget * 0.2)
+            extra_mid_hold = int(remaining_budget * 0.2 / max(1, num_red - 1)) if num_red > 1 else 0
+            
+            best_initial_hold = min_initial_hold + extra_initial_hold
+            best_transition = min_transition + extra_transition
+            best_mid_hold = min_mid_hold + extra_mid_hold
+            
+            # Ensure we don't exceed budget
+            total = best_initial_hold + num_red * best_transition + (num_red - 1) * best_mid_hold
+            if total > animation_budget:
+                # Scale down proportionally
+                scale = animation_budget / total
+                best_initial_hold = max(min_initial_hold, int(best_initial_hold * scale))
+                best_transition = max(min_transition, int(best_transition * scale))
+                best_mid_hold = max(min_mid_hold, int(best_mid_hold * scale))
         else:
-            # For 3+ books, dynamically adjust to fit within 100 frames
-            # Formula: 2 * hold + num_red * transition + (num_red - 1) * (hold // 2) ≤ max_frames
-            # We'll solve for hold and transition to maximize quality while staying under limit
-            
-            # Try different hold_frames values and calculate corresponding transition_frames
-            # Start with reasonable hold_frames and adjust
-            best_hold = 5
-            best_transition = 20
-            
-            # Try to find optimal values that stay within limit
-            for test_hold in range(3, 11):
-                # Calculate mid_hold (pause between insertions)
-                mid_hold = test_hold // 2
-                # Calculate available frames for transitions
-                hold_used = 2 * test_hold + (num_red - 1) * mid_hold
-                available_for_transitions = max_frames - hold_used
-                
-                if available_for_transitions > 0:
-                    test_transition = max(10, int(available_for_transitions / num_red))
-                    # Check if this combination fits
-                    total = 2 * test_hold + num_red * test_transition + (num_red - 1) * mid_hold
-                    if total <= max_frames and test_transition >= 10:
-                        # Prefer larger transition_frames for smoother animation
-                        if test_transition > best_transition or (test_transition == best_transition and test_hold > best_hold):
-                            best_hold = test_hold
-                            best_transition = test_transition
-            
-            hold_frames = best_hold
-            transition_frames = best_transition
+            # Budget is tight, use minimum values and scale down if needed
+            scale = animation_budget / min_required
+            best_initial_hold = max(2, int(min_initial_hold * scale))
+            best_transition = max(5, int(min_transition * scale))
+            best_mid_hold = max(1, int(min_mid_hold * scale))
+        
+        hold_frames = best_initial_hold
+        transition_frames = best_transition
+        mid_hold_frames = best_mid_hold
         
         frames = []
         
@@ -817,12 +837,13 @@ class TaskGenerator(BaseGenerator):
                 partial_frame = self._render_partial_state(
                     blue_heights, red_heights, insertion_indices, filled_slots, red_queue_order, color_scheme, visual_props
                 )
-                for _ in range(hold_frames // 2):
+                for _ in range(mid_hold_frames):
                     frames.append(partial_frame.copy())
         
         # Final state: all new books inserted, keep this state static
+        # Use reserved final_hold_frames to ensure task completion is clearly visible
         final_frame = self._render_final_state(blue_heights, red_heights, insertion_indices, color_scheme, visual_props)
-        for _ in range(hold_frames):
+        for _ in range(final_hold_frames):
             frames.append(final_frame.copy())
         
         return frames
