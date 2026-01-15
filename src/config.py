@@ -32,7 +32,7 @@ class TaskConfig(GenerationConfig):
     # ══════════════════════════════════════════════════════════════════════════
     
     domain: str = Field(default="bookshelf")
-    image_size: tuple[int, int] = Field(default=(800, 400))
+    image_size: tuple[int, int] = Field(default=(1024, 1024))
     
     # ══════════════════════════════════════════════════════════════════════════
     #  VIDEO SETTINGS

@@ -133,12 +133,12 @@ class TaskGenerator(BaseGenerator):
         """Generate additional randomized visual properties."""
         if not self.config.randomize_book_properties:
             return {
-                'book_width': 30,
+                'book_width': 38,  # Scaled from 30 for 1024x1024 (30 * 1024/800 ≈ 38)
                 'shelf_color': (139, 69, 19)  # Brown
             }
         
         return {
-            'book_width': random.randint(25, 40),  # Vary book width
+            'book_width': random.randint(32, 51),  # Scaled from 25-40 for 1024x1024
             'shelf_color': self._hsv_to_rgb(
                 random.uniform(20, 40) / 360.0,  # Brown/wood hues
                 random.uniform(0.3, 0.7),
@@ -542,8 +542,10 @@ class TaskGenerator(BaseGenerator):
         draw = ImageDraw.Draw(img)
         
         width, height = img.size
-        shelf_y = height - 50  # Shelf position (baseline)
-        shelf_height = 10  # Shelf thickness
+        # Scale parameters for 1024x1024 (from 800x400 base)
+        scale_factor = width / 800.0  # Scale based on width
+        shelf_y = height - int(50 * scale_factor)  # Shelf position (baseline)
+        shelf_height = int(10 * scale_factor)  # Shelf thickness
         
         # Extract colors and properties
         existing_color, _ = color_scheme['existing']
@@ -554,8 +556,8 @@ class TaskGenerator(BaseGenerator):
         # Draw shelf (extend to right for red books)
         draw.rectangle([0, shelf_y, width, shelf_y + shelf_height], fill=shelf_color)
         
-        spacing = 5
-        x_start = 50
+        spacing = int(5 * scale_factor)  # Scaled spacing
+        x_start = int(50 * scale_factor)  # Scaled start position
         
         # Build the layout structure (blue books + gaps)
         # This structure remains constant - red books only fill gaps, don't change structure
@@ -573,7 +575,7 @@ class TaskGenerator(BaseGenerator):
                     [x, y_top, x + book_width, shelf_y],
                     fill=existing_color,
                     outline=(0, 0, 0),
-                    width=2
+                    width=max(2, int(2 * scale_factor))  # Scaled outline width
                 )
             # Gap: just leave blank space (no drawing, no border, no height indicator)
             # The gap is represented only by the horizontal spacing
@@ -590,7 +592,7 @@ class TaskGenerator(BaseGenerator):
         # Check if red books would overflow the image width
         # If so, adjust the layout to fit everything within the image
         last_red_x = red_queue_x_start + required_red_space
-        right_margin = 20  # Keep some margin from right edge
+        right_margin = int(20 * scale_factor)  # Keep some margin from right edge (scaled)
         
         if last_red_x > width - right_margin:
             # Red books would overflow - need to adjust layout
@@ -607,7 +609,7 @@ class TaskGenerator(BaseGenerator):
                 # Try to fit by reducing spacing between red books
                 if num_red > 1:
                     # Calculate minimum spacing needed
-                    min_red_spacing = max(2, (available_space - num_red * book_width) / (num_red - 1))
+                    min_red_spacing = max(int(2 * scale_factor), (available_space - num_red * book_width) / (num_red - 1))
                     red_spacing = min(spacing, min_red_spacing)
                 else:
                     red_spacing = spacing
@@ -696,8 +698,10 @@ class TaskGenerator(BaseGenerator):
         draw = ImageDraw.Draw(img)
         
         width, height = img.size
-        shelf_y = height - 50
-        shelf_height = 10
+        # Scale parameters for 1024x1024 (from 800x400 base)
+        scale_factor = width / 800.0  # Scale based on width
+        shelf_y = height - int(50 * scale_factor)
+        shelf_height = int(10 * scale_factor)
         
         # Extract colors and properties
         existing_color, _ = color_scheme['existing']
@@ -712,8 +716,8 @@ class TaskGenerator(BaseGenerator):
         all_positions = self._build_layout_structure(blue_heights, red_heights, insertion_indices)
         
         # Draw all books (existing books and new books filling gaps)
-        spacing = 5
-        x_start = 50
+        spacing = int(5 * scale_factor)  # Scaled spacing
+        x_start = int(50 * scale_factor)  # Scaled start position
         
         for i, (pos_type, pos_height, red_idx) in enumerate(all_positions):
             x = x_start + i * (book_width + spacing)
@@ -977,7 +981,8 @@ class TaskGenerator(BaseGenerator):
             target_x = x_start + target_slot_pos * (book_width + spacing)
         
         # Two-stage movement: slight lift -> horizontal -> back down
-        lift_height = 10  # Pixels to lift
+        # Scale factor is already defined above
+        lift_height = int(10 * scale_factor)  # Pixels to lift (scaled)
         if progress < 0.2:
             # Stage 1: Lift up slightly
             lift_progress = progress / 0.2
@@ -1011,7 +1016,7 @@ class TaskGenerator(BaseGenerator):
                     [x, y_top, x + book_width, shelf_y],
                     fill=existing_color,
                     outline=(0, 0, 0),
-                    width=2
+                    width=max(2, int(2 * scale_factor))  # Scaled outline width
                 )
             else:
                 # This is a gap position
@@ -1141,7 +1146,7 @@ class TaskGenerator(BaseGenerator):
                     [x, y_top, x + book_width, shelf_y],
                     fill=existing_color,
                     outline=(0, 0, 0),
-                    width=2
+                    width=max(2, int(2 * scale_factor))  # Scaled outline width
                 )
             else:
                 # This is a gap position
