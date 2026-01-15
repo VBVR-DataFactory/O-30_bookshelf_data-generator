@@ -1159,21 +1159,42 @@ class TaskGenerator(BaseGenerator):
                 # The gap is represented only by the horizontal spacing
         
         # Draw red books still in queue (using random queue order)
+        # Calculate spacing to ensure all books fit within image
+        num_red = len(red_heights)
+        required_red_space = num_red * (book_width + spacing) - spacing
+        last_red_x = red_queue_x_start + required_red_space
+        right_margin = 20
+        
+        if last_red_x > width - right_margin:
+            available_space = width - red_queue_x_start - right_margin
+            if num_red > 1:
+                red_spacing = max(2, (available_space - num_red * book_width) / (num_red - 1))
+            else:
+                red_spacing = spacing
+        else:
+            red_spacing = spacing
+        
         for i, queue_red_idx in enumerate(red_queue_order):
             # Check if this book has already been placed
             if queue_red_idx in filled_red_indices:
                 continue  # Already placed
             
-            x = red_queue_x_start + i * (book_width + spacing)
-            queue_red_height = red_heights[queue_red_idx]
-            queue_scaled_h = int(queue_red_height * 1.5)
-            y_top = shelf_y - queue_scaled_h
+            x = red_queue_x_start + i * (book_width + red_spacing)
             
-            draw.rectangle(
-                [x, y_top, x + book_width, shelf_y],
-                fill=new_color,
-                outline=(0, 0, 0),
-                width=2
-            )
+            # Ensure book is within image bounds
+            if x + book_width > width - right_margin:
+                x = width - right_margin - book_width
+            
+            if x >= 0 and x + book_width <= width:
+                queue_red_height = red_heights[queue_red_idx]
+                queue_scaled_h = int(queue_red_height * 1.5)
+                y_top = shelf_y - queue_scaled_h
+                
+                draw.rectangle(
+                    [x, y_top, x + book_width, shelf_y],
+                    fill=new_color,
+                    outline=(0, 0, 0),
+                    width=2
+                )
         
         return img
