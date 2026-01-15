@@ -133,12 +133,12 @@ class TaskGenerator(BaseGenerator):
         """Generate additional randomized visual properties."""
         if not self.config.randomize_book_properties:
             return {
-                'book_width': 30,
+                'book_width': 38,  # Scaled from 30 for 1024x1024 (30 * 1024/800 ≈ 38)
                 'shelf_color': (139, 69, 19)  # Brown
             }
         
         return {
-            'book_width': random.randint(25, 40),  # Vary book width
+            'book_width': random.randint(32, 51),  # Scaled from 25-40 for 1024x1024
             'shelf_color': self._hsv_to_rgb(
                 random.uniform(20, 40) / 360.0,  # Brown/wood hues
                 random.uniform(0.3, 0.7),
@@ -525,6 +525,44 @@ class TaskGenerator(BaseGenerator):
     #  RENDERING
     # ══════════════════════════════════════════════════════════════════════════
     
+    def _calculate_layout_params(
+        self,
+        width: int,
+        scale_factor: float,
+        all_positions: List,
+        num_red: int,
+        book_width: int,
+        spacing: int
+    ) -> Tuple[int, int, int]:
+        """
+        Calculate layout parameters for centered shelf with red books queue on the right.
+        
+        Returns:
+            (x_start, red_queue_x_start, red_spacing)
+        """
+        # Calculate required space for red books queue
+        red_spacing = spacing  # Use same spacing for red books
+        required_red_space = num_red * (book_width + red_spacing) - red_spacing  # Last book doesn't need spacing after
+        right_margin = int(20 * scale_factor)  # Keep some margin from right edge
+        red_queue_width = required_red_space + right_margin  # Total width needed for red books queue
+        
+        # Calculate shelf (blue books + gaps) total width
+        num_blue_and_gaps = len(all_positions)
+        shelf_width = num_blue_and_gaps * (book_width + spacing) - spacing  # Last item doesn't need spacing after
+        
+        # Calculate gap between shelf and red queue
+        gap_between = int(30 * scale_factor)  # Gap between shelf and red books queue
+        
+        # Center the shelf in the remaining space (left side)
+        # Available space for shelf area = width - red_queue_width
+        available_for_shelf = width - red_queue_width
+        x_start = (available_for_shelf - shelf_width) // 2  # Center shelf in available space
+        
+        # Red books queue starts after shelf + gap
+        red_queue_x_start = x_start + shelf_width + gap_between
+        
+        return x_start, red_queue_x_start, red_spacing
+    
     def _render_initial_state(self, blue_heights: List[float], 
                              red_heights: List[float],
                              insertion_indices: Dict[int, int],
@@ -542,8 +580,10 @@ class TaskGenerator(BaseGenerator):
         draw = ImageDraw.Draw(img)
         
         width, height = img.size
-        shelf_y = height - 50  # Shelf position (baseline)
-        shelf_height = 10  # Shelf thickness
+        # Scale parameters for 1024x1024 (from 800x400 base)
+        scale_factor = width / 800.0  # Scale based on width
+        shelf_y = height // 2  # Shelf position (baseline) - vertically centered
+        shelf_height = int(10 * scale_factor)  # Shelf thickness
         
         # Extract colors and properties
         existing_color, _ = color_scheme['existing']
@@ -551,15 +591,20 @@ class TaskGenerator(BaseGenerator):
         book_width = visual_props['book_width']
         shelf_color = visual_props['shelf_color']
         
-        # Draw shelf (extend to right for red books)
+        # Draw shelf (full width)
         draw.rectangle([0, shelf_y, width, shelf_y + shelf_height], fill=shelf_color)
         
-        spacing = 5
-        x_start = 50
+        spacing = int(5 * scale_factor)  # Scaled spacing
         
         # Build the layout structure (blue books + gaps)
         # This structure remains constant - red books only fill gaps, don't change structure
         all_positions = self._build_layout_structure(blue_heights, red_heights, insertion_indices)
+        num_red = len(red_heights)
+        
+        # Calculate layout parameters (centered shelf, red queue on right)
+        x_start, red_queue_x_start, red_spacing = self._calculate_layout_params(
+            width, scale_factor, all_positions, num_red, book_width, spacing
+        )
         
         # Draw blue books and gaps on shelf
         for i, (pos_type, pos_height, red_idx) in enumerate(all_positions):
@@ -573,27 +618,26 @@ class TaskGenerator(BaseGenerator):
                     [x, y_top, x + book_width, shelf_y],
                     fill=existing_color,
                     outline=(0, 0, 0),
-                    width=2
+                    width=max(2, int(2 * scale_factor))  # Scaled outline width
                 )
             # Gap: just leave blank space (no drawing, no border, no height indicator)
             # The gap is represented only by the horizontal spacing
         
         # Draw red books on the right side, queued on the baseline
         # Use random order to show that books intelligently choose their positions
-        num_blue_and_gaps = len(all_positions)
-        red_queue_x_start = x_start + num_blue_and_gaps * (book_width + spacing) + 20
-        
         # Use provided random queue order (not sorted by height or insertion position)
         for i, red_idx in enumerate(red_queue_order):
-            x = red_queue_x_start + i * (book_width + spacing)
+            x = red_queue_x_start + i * (book_width + red_spacing)
+            
             scaled_h = int(red_heights[red_idx] * 1.5)
             y_top = shelf_y - scaled_h  # On baseline, not floating
             
+            # Draw red book (should always be within bounds now)
             draw.rectangle(
                 [x, y_top, x + book_width, shelf_y],
                 fill=new_color,
                 outline=(0, 0, 0),
-                width=2
+                width=max(2, int(2 * scale_factor))  # Scaled outline width
             )
         
         return img
@@ -652,8 +696,10 @@ class TaskGenerator(BaseGenerator):
         draw = ImageDraw.Draw(img)
         
         width, height = img.size
-        shelf_y = height - 50
-        shelf_height = 10
+        # Scale parameters for 1024x1024 (from 800x400 base)
+        scale_factor = width / 800.0  # Scale based on width
+        shelf_y = height // 2  # Shelf position (baseline) - vertically centered
+        shelf_height = int(10 * scale_factor)
         
         # Extract colors and properties
         existing_color, _ = color_scheme['existing']
@@ -668,8 +714,8 @@ class TaskGenerator(BaseGenerator):
         all_positions = self._build_layout_structure(blue_heights, red_heights, insertion_indices)
         
         # Draw all books (existing books and new books filling gaps)
-        spacing = 5
-        x_start = 50
+        spacing = int(5 * scale_factor)  # Scaled spacing
+        x_start = int(50 * scale_factor)  # Scaled start position
         
         for i, (pos_type, pos_height, red_idx) in enumerate(all_positions):
             x = x_start + i * (book_width + spacing)
@@ -738,51 +784,71 @@ class TaskGenerator(BaseGenerator):
         Create animation frames showing red books moving horizontally from right queue
         to their assigned slots.
         
-        Frame count is dynamically adjusted to ensure video duration ≤ 10 seconds.
+        Frame count is dynamically adjusted to ensure video duration ≈ 5 seconds.
         """
         # Calculate number of red books
         num_red = len(red_heights)
         
-        # Target: max 100 frames (10 seconds at 10 fps)
-        max_frames = 100
+        # Target: ~50 frames (5 seconds at 10 fps)
+        # Reserve 0.5 seconds (5 frames) for final hold to ensure task completion is visible
+        target_duration = 5.0  # seconds
+        target_fps = self.config.video_fps
+        target_total_frames = int(target_duration * target_fps)  # ~50 frames
+        final_hold_frames = max(5, int(0.5 * target_fps))  # 0.5 seconds for final hold
         
-        # Calculate frame budget
-        # Formula: initial_hold + num_red * transition + (num_red - 1) * mid_hold + final_hold ≤ max_frames
-        # We want to maintain proportions while staying within limit
-        if num_red <= 2:
-            # For 2 or fewer books, use default values (total: 85 frames for 2 books)
-            hold_frames = 10
-            transition_frames = 30
+        # Calculate frame budget for animation (excluding final hold)
+        animation_budget = target_total_frames - final_hold_frames
+        
+        # Calculate frame allocation:
+        # initial_hold + num_red * transition + (num_red - 1) * mid_hold ≤ animation_budget
+        # We want to maintain smooth animation while staying within limit
+        
+        # Minimum values for smooth animation
+        min_initial_hold = 3
+        min_transition = 8
+        min_mid_hold = 2
+        
+        # Try to find optimal values that fit within budget
+        best_initial_hold = min_initial_hold
+        best_transition = min_transition
+        best_mid_hold = min_mid_hold
+        
+        # Calculate required frames for minimum values
+        min_required = min_initial_hold + num_red * min_transition + (num_red - 1) * min_mid_hold
+        
+        if min_required <= animation_budget:
+            # We have budget, try to maximize quality
+            # Allocate proportionally: transitions get most frames, then holds
+            remaining_budget = animation_budget - min_required
+            
+            # Allocate extra frames proportionally
+            # Give 60% to transitions, 20% to initial hold, 20% to mid holds
+            extra_transition = int(remaining_budget * 0.6 / num_red) if num_red > 0 else 0
+            extra_initial_hold = int(remaining_budget * 0.2)
+            extra_mid_hold = int(remaining_budget * 0.2 / max(1, num_red - 1)) if num_red > 1 else 0
+            
+            best_initial_hold = min_initial_hold + extra_initial_hold
+            best_transition = min_transition + extra_transition
+            best_mid_hold = min_mid_hold + extra_mid_hold
+            
+            # Ensure we don't exceed budget
+            total = best_initial_hold + num_red * best_transition + (num_red - 1) * best_mid_hold
+            if total > animation_budget:
+                # Scale down proportionally
+                scale = animation_budget / total
+                best_initial_hold = max(min_initial_hold, int(best_initial_hold * scale))
+                best_transition = max(min_transition, int(best_transition * scale))
+                best_mid_hold = max(min_mid_hold, int(best_mid_hold * scale))
         else:
-            # For 3+ books, dynamically adjust to fit within 100 frames
-            # Formula: 2 * hold + num_red * transition + (num_red - 1) * (hold // 2) ≤ max_frames
-            # We'll solve for hold and transition to maximize quality while staying under limit
-            
-            # Try different hold_frames values and calculate corresponding transition_frames
-            # Start with reasonable hold_frames and adjust
-            best_hold = 5
-            best_transition = 20
-            
-            # Try to find optimal values that stay within limit
-            for test_hold in range(3, 11):
-                # Calculate mid_hold (pause between insertions)
-                mid_hold = test_hold // 2
-                # Calculate available frames for transitions
-                hold_used = 2 * test_hold + (num_red - 1) * mid_hold
-                available_for_transitions = max_frames - hold_used
-                
-                if available_for_transitions > 0:
-                    test_transition = max(10, int(available_for_transitions / num_red))
-                    # Check if this combination fits
-                    total = 2 * test_hold + num_red * test_transition + (num_red - 1) * mid_hold
-                    if total <= max_frames and test_transition >= 10:
-                        # Prefer larger transition_frames for smoother animation
-                        if test_transition > best_transition or (test_transition == best_transition and test_hold > best_hold):
-                            best_hold = test_hold
-                            best_transition = test_transition
-            
-            hold_frames = best_hold
-            transition_frames = best_transition
+            # Budget is tight, use minimum values and scale down if needed
+            scale = animation_budget / min_required
+            best_initial_hold = max(2, int(min_initial_hold * scale))
+            best_transition = max(5, int(min_transition * scale))
+            best_mid_hold = max(1, int(min_mid_hold * scale))
+        
+        hold_frames = best_initial_hold
+        transition_frames = best_transition
+        mid_hold_frames = best_mid_hold
         
         frames = []
         
@@ -817,12 +883,13 @@ class TaskGenerator(BaseGenerator):
                 partial_frame = self._render_partial_state(
                     blue_heights, red_heights, insertion_indices, filled_slots, red_queue_order, color_scheme, visual_props
                 )
-                for _ in range(hold_frames // 2):
+                for _ in range(mid_hold_frames):
                     frames.append(partial_frame.copy())
         
         # Final state: all new books inserted, keep this state static
+        # Use reserved final_hold_frames to ensure task completion is clearly visible
         final_frame = self._render_final_state(blue_heights, red_heights, insertion_indices, color_scheme, visual_props)
-        for _ in range(hold_frames):
+        for _ in range(final_hold_frames):
             frames.append(final_frame.copy())
         
         return frames
@@ -853,11 +920,12 @@ class TaskGenerator(BaseGenerator):
         draw = ImageDraw.Draw(img)
         
         width, height = img.size
-        shelf_y = height - 50  # Baseline
-        shelf_height = 10
-        book_width = 30
-        spacing = 5
-        x_start = 50
+        # Scale parameters for 1024x1024 (from 800x400 base)
+        scale_factor = width / 800.0  # Scale based on width
+        shelf_y = height // 2  # Shelf position (baseline) - vertically centered  # Baseline
+        shelf_height = int(10 * scale_factor)
+        spacing = int(5 * scale_factor)  # Scaled spacing
+        x_start = int(50 * scale_factor)  # Scaled start position
         
         # Extract colors and properties
         existing_color, _ = color_scheme['existing']
@@ -870,6 +938,12 @@ class TaskGenerator(BaseGenerator):
         
         # Build layout structure (same as initial/final state)
         all_positions = self._build_layout_structure(blue_heights, red_heights, insertion_indices)
+        
+        # Calculate layout parameters (centered shelf, red queue on right)
+        num_red = len(red_heights)
+        x_start, red_queue_x_start, red_spacing = self._calculate_layout_params(
+            width, scale_factor, all_positions, num_red, book_width, spacing
+        )
         
         # Find gap index in layout for the target red book
         # The gap corresponding to red_idx is at a specific position in the layout
@@ -892,9 +966,6 @@ class TaskGenerator(BaseGenerator):
                         gap_layout_idx = layout_idx
                         break
         
-        num_blue_and_gaps = len(all_positions)
-        red_queue_x_start = x_start + num_blue_and_gaps * (book_width + spacing) + 20
-        
         # Calculate initial and target positions for moving red book
         red_height = red_heights[red_idx]
         scaled_h = int(red_height * 1.5)
@@ -912,7 +983,8 @@ class TaskGenerator(BaseGenerator):
             target_x = x_start + target_slot_pos * (book_width + spacing)
         
         # Two-stage movement: slight lift -> horizontal -> back down
-        lift_height = 10  # Pixels to lift
+        # Scale factor is already defined above
+        lift_height = int(10 * scale_factor)  # Pixels to lift (scaled)
         if progress < 0.2:
             # Stage 1: Lift up slightly
             lift_progress = progress / 0.2
@@ -946,7 +1018,7 @@ class TaskGenerator(BaseGenerator):
                     [x, y_top, x + book_width, shelf_y],
                     fill=existing_color,
                     outline=(0, 0, 0),
-                    width=2
+                    width=max(2, int(2 * scale_factor))  # Scaled outline width
                 )
             else:
                 # This is a gap position
@@ -965,6 +1037,7 @@ class TaskGenerator(BaseGenerator):
         
         # Draw red books still in queue (excluding the one currently moving)
         # Use random queue order to maintain consistency with initial state
+        # red_spacing is already calculated by _calculate_layout_params
         for i, queue_red_idx in enumerate(red_queue_order):
             if queue_red_idx == red_idx:
                 continue  # Skip the moving book
@@ -973,7 +1046,8 @@ class TaskGenerator(BaseGenerator):
             if queue_red_idx in [r[0] for r in red_insertions_sorted[:filled_slots]]:
                 continue  # Already placed
             
-            x = red_queue_x_start + i * (book_width + spacing)
+            x = red_queue_x_start + i * (book_width + red_spacing)
+            
             queue_red_height = red_heights[queue_red_idx]
             queue_scaled_h = int(queue_red_height * 1.5)
             y_top = shelf_y - queue_scaled_h
@@ -982,7 +1056,7 @@ class TaskGenerator(BaseGenerator):
                 [x, y_top, x + book_width, shelf_y],
                 fill=new_color,
                 outline=(0, 0, 0),
-                width=2
+                width=max(2, int(2 * scale_factor))  # Scaled outline width
             )
         
         # Draw moving red book
@@ -1015,11 +1089,12 @@ class TaskGenerator(BaseGenerator):
         draw = ImageDraw.Draw(img)
         
         width, height = img.size
-        shelf_y = height - 50  # Baseline
-        shelf_height = 10
-        book_width = 30
-        spacing = 5
-        x_start = 50
+        # Scale parameters for 1024x1024 (from 800x400 base)
+        scale_factor = width / 800.0  # Scale based on width
+        shelf_y = height // 2  # Shelf position (baseline) - vertically centered  # Baseline
+        shelf_height = int(10 * scale_factor)
+        spacing = int(5 * scale_factor)  # Scaled spacing
+        x_start = int(50 * scale_factor)  # Scaled start position
         
         # Extract colors and properties
         existing_color, _ = color_scheme['existing']
@@ -1033,8 +1108,11 @@ class TaskGenerator(BaseGenerator):
         # Build layout structure (same as initial/final state)
         all_positions = self._build_layout_structure(blue_heights, red_heights, insertion_indices)
         
-        num_blue_and_gaps = len(all_positions)
-        red_queue_x_start = x_start + num_blue_and_gaps * (book_width + spacing) + 20
+        # Calculate layout parameters (centered shelf, red queue on right)
+        num_red = len(red_heights)
+        x_start, red_queue_x_start, red_spacing = self._calculate_layout_params(
+            width, scale_factor, all_positions, num_red, book_width, spacing
+        )
         
         # Sort red books to determine which gaps are filled
         red_insertions_sorted = sorted(
@@ -1055,7 +1133,7 @@ class TaskGenerator(BaseGenerator):
                     [x, y_top, x + book_width, shelf_y],
                     fill=existing_color,
                     outline=(0, 0, 0),
-                    width=2
+                    width=max(2, int(2 * scale_factor))  # Scaled outline width
                 )
             else:
                 # This is a gap position
@@ -1073,12 +1151,14 @@ class TaskGenerator(BaseGenerator):
                 # The gap is represented only by the horizontal spacing
         
         # Draw red books still in queue (using random queue order)
+        # red_spacing is already calculated by _calculate_layout_params
         for i, queue_red_idx in enumerate(red_queue_order):
             # Check if this book has already been placed
             if queue_red_idx in filled_red_indices:
                 continue  # Already placed
             
-            x = red_queue_x_start + i * (book_width + spacing)
+            x = red_queue_x_start + i * (book_width + red_spacing)
+            
             queue_red_height = red_heights[queue_red_idx]
             queue_scaled_h = int(queue_red_height * 1.5)
             y_top = shelf_y - queue_scaled_h
@@ -1087,7 +1167,7 @@ class TaskGenerator(BaseGenerator):
                 [x, y_top, x + book_width, shelf_y],
                 fill=new_color,
                 outline=(0, 0, 0),
-                width=2
+                width=max(2, int(2 * scale_factor))  # Scaled outline width
             )
         
         return img
