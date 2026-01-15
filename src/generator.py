@@ -1039,12 +1039,12 @@ class TaskGenerator(BaseGenerator):
         num_red = len(red_heights)
         required_red_space = num_red * (book_width + spacing) - spacing
         last_red_x = red_queue_x_start + required_red_space
-        right_margin = 20
+        right_margin = int(20 * scale_factor)  # Scaled margin
         
         if last_red_x > width - right_margin:
             available_space = width - red_queue_x_start - right_margin
             if num_red > 1:
-                red_spacing = max(2, (available_space - num_red * book_width) / (num_red - 1))
+                red_spacing = max(int(2 * scale_factor), (available_space - num_red * book_width) / (num_red - 1))
             else:
                 red_spacing = spacing
         else:
@@ -1168,12 +1168,12 @@ class TaskGenerator(BaseGenerator):
         num_red = len(red_heights)
         required_red_space = num_red * (book_width + spacing) - spacing
         last_red_x = red_queue_x_start + required_red_space
-        right_margin = 20
+        right_margin = int(20 * scale_factor)  # Scaled margin
         
         if last_red_x > width - right_margin:
             available_space = width - red_queue_x_start - right_margin
             if num_red > 1:
-                red_spacing = max(2, (available_space - num_red * book_width) / (num_red - 1))
+                red_spacing = max(int(2 * scale_factor), (available_space - num_red * book_width) / (num_red - 1))
             else:
                 red_spacing = spacing
         else:
