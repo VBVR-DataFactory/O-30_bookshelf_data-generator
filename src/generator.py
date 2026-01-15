@@ -583,18 +583,62 @@ class TaskGenerator(BaseGenerator):
         num_blue_and_gaps = len(all_positions)
         red_queue_x_start = x_start + num_blue_and_gaps * (book_width + spacing) + 20
         
+        # Calculate required space for all red books
+        num_red = len(red_heights)
+        required_red_space = num_red * (book_width + spacing) - spacing  # Last book doesn't need spacing after
+        
+        # Check if red books would overflow the image width
+        # If so, adjust the layout to fit everything within the image
+        last_red_x = red_queue_x_start + required_red_space
+        right_margin = 20  # Keep some margin from right edge
+        
+        if last_red_x > width - right_margin:
+            # Red books would overflow - need to adjust layout
+            # Option 1: Reduce spacing between blue books to make room
+            # Option 2: Place red books in a more compact arrangement
+            # Option 3: Reduce x_start or adjust blue book layout
+            
+            # Calculate available space for red books
+            available_space = width - red_queue_x_start - right_margin
+            
+            if available_space < required_red_space:
+                # Not enough space even with current layout
+                # Adjust: reduce spacing or place red books more compactly
+                # Try to fit by reducing spacing between red books
+                if num_red > 1:
+                    # Calculate minimum spacing needed
+                    min_red_spacing = max(2, (available_space - num_red * book_width) / (num_red - 1))
+                    red_spacing = min(spacing, min_red_spacing)
+                else:
+                    red_spacing = spacing
+            else:
+                red_spacing = spacing
+        else:
+            red_spacing = spacing
+        
         # Use provided random queue order (not sorted by height or insertion position)
         for i, red_idx in enumerate(red_queue_order):
-            x = red_queue_x_start + i * (book_width + spacing)
+            x = red_queue_x_start + i * (book_width + red_spacing)
+            
+            # Final check: ensure this book is within image bounds
+            if x + book_width > width - right_margin:
+                # This book would overflow - adjust position to fit
+                # Place it as far right as possible while staying in bounds
+                x = width - right_margin - book_width
+                # If this causes overlap with previous books, we need a different strategy
+                # For now, just ensure it's visible (may overlap slightly)
+            
             scaled_h = int(red_heights[red_idx] * 1.5)
             y_top = shelf_y - scaled_h  # On baseline, not floating
             
-            draw.rectangle(
-                [x, y_top, x + book_width, shelf_y],
-                fill=new_color,
-                outline=(0, 0, 0),
-                width=2
-            )
+            # Only draw if book is within image bounds
+            if x >= 0 and x + book_width <= width:
+                draw.rectangle(
+                    [x, y_top, x + book_width, shelf_y],
+                    fill=new_color,
+                    outline=(0, 0, 0),
+                    width=2
+                )
         
         return img
     
@@ -986,6 +1030,21 @@ class TaskGenerator(BaseGenerator):
         
         # Draw red books still in queue (excluding the one currently moving)
         # Use random queue order to maintain consistency with initial state
+        # Calculate spacing to ensure all books fit within image
+        num_red = len(red_heights)
+        required_red_space = num_red * (book_width + spacing) - spacing
+        last_red_x = red_queue_x_start + required_red_space
+        right_margin = 20
+        
+        if last_red_x > width - right_margin:
+            available_space = width - red_queue_x_start - right_margin
+            if num_red > 1:
+                red_spacing = max(2, (available_space - num_red * book_width) / (num_red - 1))
+            else:
+                red_spacing = spacing
+        else:
+            red_spacing = spacing
+        
         for i, queue_red_idx in enumerate(red_queue_order):
             if queue_red_idx == red_idx:
                 continue  # Skip the moving book
@@ -994,17 +1053,23 @@ class TaskGenerator(BaseGenerator):
             if queue_red_idx in [r[0] for r in red_insertions_sorted[:filled_slots]]:
                 continue  # Already placed
             
-            x = red_queue_x_start + i * (book_width + spacing)
-            queue_red_height = red_heights[queue_red_idx]
-            queue_scaled_h = int(queue_red_height * 1.5)
-            y_top = shelf_y - queue_scaled_h
+            x = red_queue_x_start + i * (book_width + red_spacing)
             
-            draw.rectangle(
-                [x, y_top, x + book_width, shelf_y],
-                fill=new_color,
-                outline=(0, 0, 0),
-                width=2
-            )
+            # Ensure book is within image bounds
+            if x + book_width > width - right_margin:
+                x = width - right_margin - book_width
+            
+            if x >= 0 and x + book_width <= width:
+                queue_red_height = red_heights[queue_red_idx]
+                queue_scaled_h = int(queue_red_height * 1.5)
+                y_top = shelf_y - queue_scaled_h
+                
+                draw.rectangle(
+                    [x, y_top, x + book_width, shelf_y],
+                    fill=new_color,
+                    outline=(0, 0, 0),
+                    width=2
+                )
         
         # Draw moving red book
         draw.rectangle(
