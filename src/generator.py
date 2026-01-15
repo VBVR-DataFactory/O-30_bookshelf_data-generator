@@ -582,7 +582,7 @@ class TaskGenerator(BaseGenerator):
         width, height = img.size
         # Scale parameters for 1024x1024 (from 800x400 base)
         scale_factor = width / 800.0  # Scale based on width
-        shelf_y = height - int(50 * scale_factor)  # Shelf position (baseline)
+        shelf_y = height // 2  # Shelf position (baseline) - vertically centered
         shelf_height = int(10 * scale_factor)  # Shelf thickness
         
         # Extract colors and properties
