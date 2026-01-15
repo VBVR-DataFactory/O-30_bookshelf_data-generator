@@ -698,7 +698,7 @@ class TaskGenerator(BaseGenerator):
         width, height = img.size
         # Scale parameters for 1024x1024 (from 800x400 base)
         scale_factor = width / 800.0  # Scale based on width
-        shelf_y = height - int(50 * scale_factor)
+        shelf_y = height // 2  # Shelf position (baseline) - vertically centered
         shelf_height = int(10 * scale_factor)
         
         # Extract colors and properties
@@ -922,7 +922,7 @@ class TaskGenerator(BaseGenerator):
         width, height = img.size
         # Scale parameters for 1024x1024 (from 800x400 base)
         scale_factor = width / 800.0  # Scale based on width
-        shelf_y = height - int(50 * scale_factor)  # Baseline
+        shelf_y = height // 2  # Shelf position (baseline) - vertically centered  # Baseline
         shelf_height = int(10 * scale_factor)
         spacing = int(5 * scale_factor)  # Scaled spacing
         x_start = int(50 * scale_factor)  # Scaled start position
@@ -1091,7 +1091,7 @@ class TaskGenerator(BaseGenerator):
         width, height = img.size
         # Scale parameters for 1024x1024 (from 800x400 base)
         scale_factor = width / 800.0  # Scale based on width
-        shelf_y = height - int(50 * scale_factor)  # Baseline
+        shelf_y = height // 2  # Shelf position (baseline) - vertically centered  # Baseline
         shelf_height = int(10 * scale_factor)
         spacing = int(5 * scale_factor)  # Scaled spacing
         x_start = int(50 * scale_factor)  # Scaled start position
