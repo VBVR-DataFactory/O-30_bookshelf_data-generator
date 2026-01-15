@@ -525,6 +525,44 @@ class TaskGenerator(BaseGenerator):
     #  RENDERING
     # ══════════════════════════════════════════════════════════════════════════
     
+    def _calculate_layout_params(
+        self,
+        width: int,
+        scale_factor: float,
+        all_positions: List,
+        num_red: int,
+        book_width: int,
+        spacing: int
+    ) -> Tuple[int, int, int]:
+        """
+        Calculate layout parameters for centered shelf with red books queue on the right.
+        
+        Returns:
+            (x_start, red_queue_x_start, red_spacing)
+        """
+        # Calculate required space for red books queue
+        red_spacing = spacing  # Use same spacing for red books
+        required_red_space = num_red * (book_width + red_spacing) - red_spacing  # Last book doesn't need spacing after
+        right_margin = int(20 * scale_factor)  # Keep some margin from right edge
+        red_queue_width = required_red_space + right_margin  # Total width needed for red books queue
+        
+        # Calculate shelf (blue books + gaps) total width
+        num_blue_and_gaps = len(all_positions)
+        shelf_width = num_blue_and_gaps * (book_width + spacing) - spacing  # Last item doesn't need spacing after
+        
+        # Calculate gap between shelf and red queue
+        gap_between = int(30 * scale_factor)  # Gap between shelf and red books queue
+        
+        # Center the shelf in the remaining space (left side)
+        # Available space for shelf area = width - red_queue_width
+        available_for_shelf = width - red_queue_width
+        x_start = (available_for_shelf - shelf_width) // 2  # Center shelf in available space
+        
+        # Red books queue starts after shelf + gap
+        red_queue_x_start = x_start + shelf_width + gap_between
+        
+        return x_start, red_queue_x_start, red_spacing
+    
     def _render_initial_state(self, blue_heights: List[float], 
                              red_heights: List[float],
                              insertion_indices: Dict[int, int],
@@ -553,15 +591,20 @@ class TaskGenerator(BaseGenerator):
         book_width = visual_props['book_width']
         shelf_color = visual_props['shelf_color']
         
-        # Draw shelf (extend to right for red books)
+        # Draw shelf (full width)
         draw.rectangle([0, shelf_y, width, shelf_y + shelf_height], fill=shelf_color)
         
         spacing = int(5 * scale_factor)  # Scaled spacing
-        x_start = int(50 * scale_factor)  # Scaled start position
         
         # Build the layout structure (blue books + gaps)
         # This structure remains constant - red books only fill gaps, don't change structure
         all_positions = self._build_layout_structure(blue_heights, red_heights, insertion_indices)
+        num_red = len(red_heights)
+        
+        # Calculate layout parameters (centered shelf, red queue on right)
+        x_start, red_queue_x_start, red_spacing = self._calculate_layout_params(
+            width, scale_factor, all_positions, num_red, book_width, spacing
+        )
         
         # Draw blue books and gaps on shelf
         for i, (pos_type, pos_height, red_idx) in enumerate(all_positions):
@@ -582,65 +625,20 @@ class TaskGenerator(BaseGenerator):
         
         # Draw red books on the right side, queued on the baseline
         # Use random order to show that books intelligently choose their positions
-        num_blue_and_gaps = len(all_positions)
-        red_queue_x_start = x_start + num_blue_and_gaps * (book_width + spacing) + 20
-        
-        # Calculate required space for all red books
-        num_red = len(red_heights)
-        required_red_space = num_red * (book_width + spacing) - spacing  # Last book doesn't need spacing after
-        
-        # Check if red books would overflow the image width
-        # If so, adjust the layout to fit everything within the image
-        last_red_x = red_queue_x_start + required_red_space
-        right_margin = int(20 * scale_factor)  # Keep some margin from right edge (scaled)
-        
-        if last_red_x > width - right_margin:
-            # Red books would overflow - need to adjust layout
-            # Option 1: Reduce spacing between blue books to make room
-            # Option 2: Place red books in a more compact arrangement
-            # Option 3: Reduce x_start or adjust blue book layout
-            
-            # Calculate available space for red books
-            available_space = width - red_queue_x_start - right_margin
-            
-            if available_space < required_red_space:
-                # Not enough space even with current layout
-                # Adjust: reduce spacing or place red books more compactly
-                # Try to fit by reducing spacing between red books
-                if num_red > 1:
-                    # Calculate minimum spacing needed
-                    min_red_spacing = max(int(2 * scale_factor), (available_space - num_red * book_width) / (num_red - 1))
-                    red_spacing = min(spacing, min_red_spacing)
-                else:
-                    red_spacing = spacing
-            else:
-                red_spacing = spacing
-        else:
-            red_spacing = spacing
-        
         # Use provided random queue order (not sorted by height or insertion position)
         for i, red_idx in enumerate(red_queue_order):
             x = red_queue_x_start + i * (book_width + red_spacing)
             
-            # Final check: ensure this book is within image bounds
-            if x + book_width > width - right_margin:
-                # This book would overflow - adjust position to fit
-                # Place it as far right as possible while staying in bounds
-                x = width - right_margin - book_width
-                # If this causes overlap with previous books, we need a different strategy
-                # For now, just ensure it's visible (may overlap slightly)
-            
             scaled_h = int(red_heights[red_idx] * 1.5)
             y_top = shelf_y - scaled_h  # On baseline, not floating
             
-            # Only draw if book is within image bounds
-            if x >= 0 and x + book_width <= width:
-                draw.rectangle(
-                    [x, y_top, x + book_width, shelf_y],
-                    fill=new_color,
-                    outline=(0, 0, 0),
-                    width=2
-                )
+            # Draw red book (should always be within bounds now)
+            draw.rectangle(
+                [x, y_top, x + book_width, shelf_y],
+                fill=new_color,
+                outline=(0, 0, 0),
+                width=max(2, int(2 * scale_factor))  # Scaled outline width
+            )
         
         return img
     
@@ -941,6 +939,12 @@ class TaskGenerator(BaseGenerator):
         # Build layout structure (same as initial/final state)
         all_positions = self._build_layout_structure(blue_heights, red_heights, insertion_indices)
         
+        # Calculate layout parameters (centered shelf, red queue on right)
+        num_red = len(red_heights)
+        x_start, red_queue_x_start, red_spacing = self._calculate_layout_params(
+            width, scale_factor, all_positions, num_red, book_width, spacing
+        )
+        
         # Find gap index in layout for the target red book
         # The gap corresponding to red_idx is at a specific position in the layout
         gap_layout_idx = None
@@ -961,9 +965,6 @@ class TaskGenerator(BaseGenerator):
                     if gap_insertion_pos == target_slot_pos:
                         gap_layout_idx = layout_idx
                         break
-        
-        num_blue_and_gaps = len(all_positions)
-        red_queue_x_start = x_start + num_blue_and_gaps * (book_width + spacing) + int(20 * scale_factor)
         
         # Calculate initial and target positions for moving red book
         red_height = red_heights[red_idx]
@@ -1036,21 +1037,7 @@ class TaskGenerator(BaseGenerator):
         
         # Draw red books still in queue (excluding the one currently moving)
         # Use random queue order to maintain consistency with initial state
-        # Calculate spacing to ensure all books fit within image
-        num_red = len(red_heights)
-        required_red_space = num_red * (book_width + spacing) - spacing
-        last_red_x = red_queue_x_start + required_red_space
-        right_margin = int(20 * scale_factor)  # Scaled margin
-        
-        if last_red_x > width - right_margin:
-            available_space = width - red_queue_x_start - right_margin
-            if num_red > 1:
-                red_spacing = max(int(2 * scale_factor), (available_space - num_red * book_width) / (num_red - 1))
-            else:
-                red_spacing = spacing
-        else:
-            red_spacing = spacing
-        
+        # red_spacing is already calculated by _calculate_layout_params
         for i, queue_red_idx in enumerate(red_queue_order):
             if queue_red_idx == red_idx:
                 continue  # Skip the moving book
@@ -1061,21 +1048,16 @@ class TaskGenerator(BaseGenerator):
             
             x = red_queue_x_start + i * (book_width + red_spacing)
             
-            # Ensure book is within image bounds
-            if x + book_width > width - right_margin:
-                x = width - right_margin - book_width
+            queue_red_height = red_heights[queue_red_idx]
+            queue_scaled_h = int(queue_red_height * 1.5)
+            y_top = shelf_y - queue_scaled_h
             
-            if x >= 0 and x + book_width <= width:
-                queue_red_height = red_heights[queue_red_idx]
-                queue_scaled_h = int(queue_red_height * 1.5)
-                y_top = shelf_y - queue_scaled_h
-                
-                draw.rectangle(
-                    [x, y_top, x + book_width, shelf_y],
-                    fill=new_color,
-                    outline=(0, 0, 0),
-                    width=2
-                )
+            draw.rectangle(
+                [x, y_top, x + book_width, shelf_y],
+                fill=new_color,
+                outline=(0, 0, 0),
+                width=max(2, int(2 * scale_factor))  # Scaled outline width
+            )
         
         # Draw moving red book
         draw.rectangle(
@@ -1126,8 +1108,11 @@ class TaskGenerator(BaseGenerator):
         # Build layout structure (same as initial/final state)
         all_positions = self._build_layout_structure(blue_heights, red_heights, insertion_indices)
         
-        num_blue_and_gaps = len(all_positions)
-        red_queue_x_start = x_start + num_blue_and_gaps * (book_width + spacing) + int(20 * scale_factor)
+        # Calculate layout parameters (centered shelf, red queue on right)
+        num_red = len(red_heights)
+        x_start, red_queue_x_start, red_spacing = self._calculate_layout_params(
+            width, scale_factor, all_positions, num_red, book_width, spacing
+        )
         
         # Sort red books to determine which gaps are filled
         red_insertions_sorted = sorted(
@@ -1166,21 +1151,7 @@ class TaskGenerator(BaseGenerator):
                 # The gap is represented only by the horizontal spacing
         
         # Draw red books still in queue (using random queue order)
-        # Calculate spacing to ensure all books fit within image
-        num_red = len(red_heights)
-        required_red_space = num_red * (book_width + spacing) - spacing
-        last_red_x = red_queue_x_start + required_red_space
-        right_margin = int(20 * scale_factor)  # Scaled margin
-        
-        if last_red_x > width - right_margin:
-            available_space = width - red_queue_x_start - right_margin
-            if num_red > 1:
-                red_spacing = max(int(2 * scale_factor), (available_space - num_red * book_width) / (num_red - 1))
-            else:
-                red_spacing = spacing
-        else:
-            red_spacing = spacing
-        
+        # red_spacing is already calculated by _calculate_layout_params
         for i, queue_red_idx in enumerate(red_queue_order):
             # Check if this book has already been placed
             if queue_red_idx in filled_red_indices:
@@ -1188,20 +1159,15 @@ class TaskGenerator(BaseGenerator):
             
             x = red_queue_x_start + i * (book_width + red_spacing)
             
-            # Ensure book is within image bounds
-            if x + book_width > width - right_margin:
-                x = width - right_margin - book_width
+            queue_red_height = red_heights[queue_red_idx]
+            queue_scaled_h = int(queue_red_height * 1.5)
+            y_top = shelf_y - queue_scaled_h
             
-            if x >= 0 and x + book_width <= width:
-                queue_red_height = red_heights[queue_red_idx]
-                queue_scaled_h = int(queue_red_height * 1.5)
-                y_top = shelf_y - queue_scaled_h
-                
-                draw.rectangle(
-                    [x, y_top, x + book_width, shelf_y],
-                    fill=new_color,
-                    outline=(0, 0, 0),
-                    width=2
-                )
+            draw.rectangle(
+                [x, y_top, x + book_width, shelf_y],
+                fill=new_color,
+                outline=(0, 0, 0),
+                width=max(2, int(2 * scale_factor))  # Scaled outline width
+            )
         
         return img
