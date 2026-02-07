@@ -588,30 +588,52 @@ class TaskGenerator(BaseGenerator):
     ) -> Tuple[int, int, int]:
         """
         Calculate layout parameters for centered shelf with red books queue on the right.
+        Ensures all books stay within scene boundaries.
         
         Returns:
             (x_start, red_queue_x_start, red_spacing)
         """
         # Calculate required space for red books queue
         red_spacing = spacing  # Use same spacing for red books
-        required_red_space = num_red * (book_width + red_spacing) - red_spacing  # Last book doesn't need spacing after
-        right_margin = int(20 * scale_factor)  # Keep some margin from right edge
-        red_queue_width = required_red_space + right_margin  # Total width needed for red books queue
+        left_margin = int(30 * scale_factor)  # Margin from left edge
+        right_margin = int(30 * scale_factor)  # Margin from right edge
+        gap_between = int(30 * scale_factor)  # Gap between shelf and red books queue
         
         # Calculate shelf (blue books + gaps) total width
         num_blue_and_gaps = len(all_positions)
         shelf_width = num_blue_and_gaps * (book_width + spacing) - spacing  # Last item doesn't need spacing after
         
-        # Calculate gap between shelf and red queue
-        gap_between = int(30 * scale_factor)  # Gap between shelf and red books queue
+        # Calculate red books queue width
+        required_red_space = num_red * (book_width + red_spacing) - red_spacing  # Last book doesn't need spacing after
         
-        # Center the shelf in the remaining space (left side)
-        # Available space for shelf area = width - red_queue_width
-        available_for_shelf = width - red_queue_width
-        x_start = (available_for_shelf - shelf_width) // 2  # Center shelf in available space
+        # Total required width
+        total_required = left_margin + shelf_width + gap_between + required_red_space + right_margin
         
-        # Red books queue starts after shelf + gap
+        # Check if everything fits
+        if total_required > width:
+            # Need to adjust spacing or layout to fit within boundaries
+            # Strategy: reduce spacing and margins proportionally
+            scale_down = width / total_required
+            left_margin = int(left_margin * scale_down)
+            right_margin = int(right_margin * scale_down)
+            gap_between = int(gap_between * scale_down)
+            red_spacing = int(red_spacing * scale_down)
+            
+            # Recalculate widths with new spacing
+            shelf_width = num_blue_and_gaps * (book_width + int(spacing * scale_down)) - int(spacing * scale_down)
+            required_red_space = num_red * (book_width + red_spacing) - red_spacing
+        
+        # Calculate positions
+        x_start = left_margin
         red_queue_x_start = x_start + shelf_width + gap_between
+        
+        # Final safety check: ensure last red book is within bounds
+        last_red_book_right_edge = red_queue_x_start + required_red_space
+        if last_red_book_right_edge > width - right_margin:
+            # Shift everything left to ensure right margin
+            shift_left = last_red_book_right_edge - (width - right_margin)
+            x_start = max(left_margin, x_start - shift_left)
+            red_queue_x_start = x_start + shelf_width + gap_between
         
         return x_start, red_queue_x_start, red_spacing
     
