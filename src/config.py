@@ -44,7 +44,7 @@ class TaskConfig(GenerationConfig):
     )
     
     video_fps: int = Field(
-        default=10,
+        default=16,
         description="Video frame rate"
     )
     
@@ -53,7 +53,7 @@ class TaskConfig(GenerationConfig):
     # ══════════════════════════════════════════════════════════════════════════
     
     num_blue_books: int = Field(
-        default=10,
+        default=16,
         description="Number of blue books (existing books on shelf)"
     )
     
