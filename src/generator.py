@@ -46,6 +46,9 @@ class TaskGenerator(BaseGenerator):
         """
         Generate procedural color scheme for existing and new books.
         
+        For existing (left) books: any color from full spectrum
+        For new (right) books: only common, simple color names
+        
         Returns:
             Dict with 'existing' and 'new' keys, each containing (rgb_tuple, color_name)
         """
@@ -56,16 +59,27 @@ class TaskGenerator(BaseGenerator):
                 'new': ((220, 20, 60), "red")  # Crimson red
             }
         
-        # Generate two visually distinct colors using HSV space
-        existing_hue = random.uniform(0, 360)
+        # Common colors for new books (right side) - only simple, well-known color names
+        COMMON_COLORS = [
+            (0, "red"),       # Red
+            (30, "orange"),   # Orange
+            (60, "yellow"),   # Yellow
+            (120, "green"),   # Green
+            (210, "blue"),    # Blue
+            (270, "purple"),  # Purple
+            (330, "pink")     # Pink
+        ]
         
-        # Ensure new book color is sufficiently different
+        # Choose a random common color for new books
+        new_hue, new_color_name = random.choice(COMMON_COLORS)
+        
+        # Generate existing book color (can be any hue, but must be different from new book)
         min_distance = self.config.min_color_distance
-        new_hue = existing_hue
+        existing_hue = new_hue
         attempts = 0
-        while abs(new_hue - existing_hue) < min_distance and attempts < 10:
-            new_hue = random.uniform(0, 360)
-            if abs(new_hue - existing_hue) > 360 - min_distance:
+        while abs(existing_hue - new_hue) < min_distance and attempts < 10:
+            existing_hue = random.uniform(0, 360)
+            if abs(existing_hue - new_hue) > 360 - min_distance:
                 break  # Colors are far apart (wrapping around 360)
             attempts += 1
         
@@ -76,19 +90,16 @@ class TaskGenerator(BaseGenerator):
             random.uniform(0.4, 0.8)   # Medium to high brightness
         )
         
+        # New book color: use exact hue from common colors with slight variation
         new_rgb = self._hsv_to_rgb(
             new_hue / 360.0,
-            random.uniform(0.6, 0.9),  # High saturation
-            random.uniform(0.4, 0.8)   # Medium to high brightness
+            random.uniform(0.7, 0.9),  # High saturation for vivid colors
+            random.uniform(0.5, 0.8)   # Medium to high brightness
         )
         
-        # Generate descriptive color names
-        existing_name = self._get_color_name(existing_hue) if self.config.use_color_names else "color1"
-        new_name = self._get_color_name(new_hue) if self.config.use_color_names else "color2"
-        
         return {
-            'existing': (existing_rgb, existing_name),
-            'new': (new_rgb, new_name)
+            'existing': (existing_rgb, ""),  # No color name for existing books
+            'new': (new_rgb, new_color_name)  # Simple color name for new books
         }
     
     def _hsv_to_rgb(self, h: float, s: float, v: float) -> Tuple[int, int, int]:
