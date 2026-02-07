@@ -29,9 +29,10 @@ class OutputWriter:
         (task_dir / "prompt.txt").write_text(task_pair.prompt)
         
         # Write insertion indices if provided (required for bookshelf task)
-        if task_pair.insertion_indices is not None:
-            indices_text = self._format_insertion_indices(task_pair.insertion_indices)
-            (task_dir / "insertion_indices.txt").write_text(indices_text)
+        # Do not write insertion_indices.txt as it reveals the answer
+        # if task_pair.insertion_indices is not None:
+        #     indices_text = self._format_insertion_indices(task_pair.insertion_indices)
+        #     (task_dir / "insertion_indices.txt").write_text(indices_text)
         
         # Write video if provided (preserve original extension)
         if task_pair.ground_truth_video and Path(task_pair.ground_truth_video).exists():
