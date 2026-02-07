@@ -40,5 +40,5 @@ ENV/
 ehthumbs.db
 Thumbs.db
 
-# Generated data (optional - uncomment if you don't want to track generated samples)
-# data/
+# Generated data
+data/unified_dataset/
