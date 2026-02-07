@@ -294,6 +294,8 @@ class TaskGenerator(BaseGenerator):
         Uses optimal assignment based on slot target heights, then selects closest
         adjacent blue book height for each assigned slot.
         
+        IMPORTANT: Ensures red books have minimum height difference for visual clarity.
+        
         Args:
             blue_heights: List of blue book heights
             slot_info: List of (slot_position, [adjacent_blue_heights]) tuples
@@ -302,6 +304,9 @@ class TaskGenerator(BaseGenerator):
         Returns:
             Tuple of (red_heights, insertion_indices)
         """
+        
+        # Minimum height difference between red books for visual clarity
+        MIN_RED_HEIGHT_DIFFERENCE = 20.0
         
         # Extract slot positions and target heights (average of adjacent blue books)
         slot_positions = [pos for pos, _ in slot_info]
@@ -318,12 +323,54 @@ class TaskGenerator(BaseGenerator):
             slot_targets.append(target)
             slot_adjacent_heights.append(adjacent_heights)
         
-        # Generate initial red book heights from all adjacent blue books
-        # These will be used for optimal assignment
+        # Sort slot targets to ensure we select from different height ranges
+        # This naturally creates height differences between red books
+        sorted_slot_indices = sorted(range(len(slot_targets)), key=lambda i: slot_targets[i])
+        
+        # Generate initial red book heights from slots in different height ranges
+        # Strategy: select from widely separated slots to ensure height diversity
         initial_red_heights = []
-        for adjacent_heights in slot_adjacent_heights:
-            # Randomly choose one height from adjacent blue books
-            initial_red_heights.append(random.choice(adjacent_heights))
+        for slot_idx in sorted_slot_indices:
+            adjacent_heights = slot_adjacent_heights[slot_idx]
+            # Choose height closest to slot target
+            target = slot_targets[slot_idx]
+            closest_height = min(adjacent_heights, key=lambda h: abs(h - target))
+            initial_red_heights.append(closest_height)
+        
+        # Ensure minimum height difference between red books
+        # Sort and check/adjust heights if too close
+        red_heights_with_idx = list(enumerate(initial_red_heights))
+        red_heights_with_idx.sort(key=lambda x: x[1])  # Sort by height
+        
+        # Adjust heights if they're too close
+        for i in range(1, len(red_heights_with_idx)):
+            prev_idx, prev_height = red_heights_with_idx[i - 1]
+            curr_idx, curr_height = red_heights_with_idx[i]
+            
+            if curr_height - prev_height < MIN_RED_HEIGHT_DIFFERENCE:
+                # Adjust current height to maintain minimum difference
+                adjustment_needed = MIN_RED_HEIGHT_DIFFERENCE - (curr_height - prev_height)
+                
+                # Try to increase current height
+                slot_idx = sorted_slot_indices[curr_idx]
+                adjacent_heights = slot_adjacent_heights[slot_idx]
+                max_adjacent = max(adjacent_heights)
+                
+                # If we can increase, do so
+                if curr_height + adjustment_needed <= max_adjacent + 5:
+                    red_heights_with_idx[i] = (curr_idx, curr_height + adjustment_needed)
+                else:
+                    # Otherwise, try to decrease previous height
+                    slot_idx_prev = sorted_slot_indices[prev_idx]
+                    adjacent_heights_prev = slot_adjacent_heights[slot_idx_prev]
+                    min_adjacent_prev = min(adjacent_heights_prev)
+                    
+                    if prev_height - adjustment_needed >= min_adjacent_prev - 5:
+                        red_heights_with_idx[i - 1] = (prev_idx, prev_height - adjustment_needed)
+        
+        # Rebuild initial_red_heights with adjusted values
+        for idx, height in red_heights_with_idx:
+            initial_red_heights[sorted_slot_indices[idx]] = height
         
         # Optimal assignment: minimize sum of |red_height - slot_target|
         assignment = self._optimal_assignment(initial_red_heights, slot_targets, slot_positions)
@@ -337,17 +384,11 @@ class TaskGenerator(BaseGenerator):
         for red_idx, slot_pos in assignment.items():
             slot_to_red[slot_pos] = red_idx
         
-        # Generate red book heights from their assigned slot's adjacent blue books
-        for slot_pos, adjacent_heights in zip(slot_positions, slot_adjacent_heights):
+        # Use the adjusted heights from initial generation
+        for slot_idx, slot_pos in enumerate(slot_positions):
             if slot_pos in slot_to_red:
                 red_idx = slot_to_red[slot_pos]
-                # Choose the adjacent blue book height closest to slot target
-                slot_idx = slot_positions.index(slot_pos)
-                target = slot_targets[slot_idx]
-                
-                # Find closest adjacent height to target
-                closest_height = min(adjacent_heights, key=lambda h: abs(h - target))
-                red_heights[red_idx] = closest_height
+                red_heights[red_idx] = initial_red_heights[slot_idx]
         
         return red_heights, assignment
     
