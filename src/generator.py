@@ -133,12 +133,12 @@ class TaskGenerator(BaseGenerator):
         """Generate additional randomized visual properties."""
         if not self.config.randomize_book_properties:
             return {
-                'book_width': 38,  # Scaled from 30 for 1024x1024 (30 * 1024/800 ≈ 38)
+                'book_width': 26,  # Scaled from 30 for 1024x1024 (30 * 1024/800 ≈ 38)
                 'shelf_color': (139, 69, 19)  # Brown
             }
         
         return {
-            'book_width': random.randint(32, 51),  # Scaled from 25-40 for 1024x1024
+            'book_width': random.randint(24, 34),  # Scaled from 25-40 for 1024x1024
             'shelf_color': self._hsv_to_rgb(
                 random.uniform(20, 40) / 360.0,  # Brown/wood hues
                 random.uniform(0.3, 0.7),
