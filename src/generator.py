@@ -888,7 +888,11 @@ class TaskGenerator(BaseGenerator):
         
         # Final state: all new books inserted, keep this state static
         # Use reserved final_hold_frames to ensure task completion is clearly visible
-        final_frame = self._render_final_state(blue_heights, red_heights, insertion_indices, color_scheme, visual_props)
+        # Use _render_partial_state with all slots filled to avoid "flash/alignment" effect
+        # This maintains the same visual layout as animation frames (with spacing between books)
+        final_frame = self._render_partial_state(
+            blue_heights, red_heights, insertion_indices, len(red_insertions), red_queue_order, color_scheme, visual_props
+        )
         for _ in range(final_hold_frames):
             frames.append(final_frame.copy())
         
