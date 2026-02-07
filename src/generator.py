@@ -46,6 +46,9 @@ class TaskGenerator(BaseGenerator):
         """
         Generate procedural color scheme for existing and new books.
         
+        For existing (left) books: any color from full spectrum
+        For new (right) books: only common, simple color names
+        
         Returns:
             Dict with 'existing' and 'new' keys, each containing (rgb_tuple, color_name)
         """
@@ -56,16 +59,27 @@ class TaskGenerator(BaseGenerator):
                 'new': ((220, 20, 60), "red")  # Crimson red
             }
         
-        # Generate two visually distinct colors using HSV space
-        existing_hue = random.uniform(0, 360)
+        # Common colors for new books (right side) - only simple, well-known color names
+        COMMON_COLORS = [
+            (0, "red"),       # Red
+            (30, "orange"),   # Orange
+            (60, "yellow"),   # Yellow
+            (120, "green"),   # Green
+            (210, "blue"),    # Blue
+            (270, "purple"),  # Purple
+            (330, "pink")     # Pink
+        ]
         
-        # Ensure new book color is sufficiently different
+        # Choose a random common color for new books
+        new_hue, new_color_name = random.choice(COMMON_COLORS)
+        
+        # Generate existing book color (can be any hue, but must be different from new book)
         min_distance = self.config.min_color_distance
-        new_hue = existing_hue
+        existing_hue = new_hue
         attempts = 0
-        while abs(new_hue - existing_hue) < min_distance and attempts < 10:
-            new_hue = random.uniform(0, 360)
-            if abs(new_hue - existing_hue) > 360 - min_distance:
+        while abs(existing_hue - new_hue) < min_distance and attempts < 10:
+            existing_hue = random.uniform(0, 360)
+            if abs(existing_hue - new_hue) > 360 - min_distance:
                 break  # Colors are far apart (wrapping around 360)
             attempts += 1
         
@@ -76,19 +90,16 @@ class TaskGenerator(BaseGenerator):
             random.uniform(0.4, 0.8)   # Medium to high brightness
         )
         
+        # New book color: use exact hue from common colors with slight variation
         new_rgb = self._hsv_to_rgb(
             new_hue / 360.0,
-            random.uniform(0.6, 0.9),  # High saturation
-            random.uniform(0.4, 0.8)   # Medium to high brightness
+            random.uniform(0.7, 0.9),  # High saturation for vivid colors
+            random.uniform(0.5, 0.8)   # Medium to high brightness
         )
         
-        # Generate descriptive color names
-        existing_name = self._get_color_name(existing_hue) if self.config.use_color_names else "color1"
-        new_name = self._get_color_name(new_hue) if self.config.use_color_names else "color2"
-        
         return {
-            'existing': (existing_rgb, existing_name),
-            'new': (new_rgb, new_name)
+            'existing': (existing_rgb, ""),  # No color name for existing books
+            'new': (new_rgb, new_color_name)  # Simple color name for new books
         }
     
     def _hsv_to_rgb(self, h: float, s: float, v: float) -> Tuple[int, int, int]:
@@ -283,6 +294,8 @@ class TaskGenerator(BaseGenerator):
         Uses optimal assignment based on slot target heights, then selects closest
         adjacent blue book height for each assigned slot.
         
+        IMPORTANT: Ensures red books have minimum height difference for visual clarity.
+        
         Args:
             blue_heights: List of blue book heights
             slot_info: List of (slot_position, [adjacent_blue_heights]) tuples
@@ -291,6 +304,9 @@ class TaskGenerator(BaseGenerator):
         Returns:
             Tuple of (red_heights, insertion_indices)
         """
+        
+        # Minimum height difference between red books for visual clarity
+        MIN_RED_HEIGHT_DIFFERENCE = 20.0
         
         # Extract slot positions and target heights (average of adjacent blue books)
         slot_positions = [pos for pos, _ in slot_info]
@@ -307,12 +323,54 @@ class TaskGenerator(BaseGenerator):
             slot_targets.append(target)
             slot_adjacent_heights.append(adjacent_heights)
         
-        # Generate initial red book heights from all adjacent blue books
-        # These will be used for optimal assignment
+        # Sort slot targets to ensure we select from different height ranges
+        # This naturally creates height differences between red books
+        sorted_slot_indices = sorted(range(len(slot_targets)), key=lambda i: slot_targets[i])
+        
+        # Generate initial red book heights from slots in different height ranges
+        # Strategy: select from widely separated slots to ensure height diversity
         initial_red_heights = []
-        for adjacent_heights in slot_adjacent_heights:
-            # Randomly choose one height from adjacent blue books
-            initial_red_heights.append(random.choice(adjacent_heights))
+        for slot_idx in sorted_slot_indices:
+            adjacent_heights = slot_adjacent_heights[slot_idx]
+            # Choose height closest to slot target
+            target = slot_targets[slot_idx]
+            closest_height = min(adjacent_heights, key=lambda h: abs(h - target))
+            initial_red_heights.append(closest_height)
+        
+        # Ensure minimum height difference between red books
+        # Sort and check/adjust heights if too close
+        red_heights_with_idx = list(enumerate(initial_red_heights))
+        red_heights_with_idx.sort(key=lambda x: x[1])  # Sort by height
+        
+        # Adjust heights if they're too close
+        for i in range(1, len(red_heights_with_idx)):
+            prev_idx, prev_height = red_heights_with_idx[i - 1]
+            curr_idx, curr_height = red_heights_with_idx[i]
+            
+            if curr_height - prev_height < MIN_RED_HEIGHT_DIFFERENCE:
+                # Adjust current height to maintain minimum difference
+                adjustment_needed = MIN_RED_HEIGHT_DIFFERENCE - (curr_height - prev_height)
+                
+                # Try to increase current height
+                slot_idx = sorted_slot_indices[curr_idx]
+                adjacent_heights = slot_adjacent_heights[slot_idx]
+                max_adjacent = max(adjacent_heights)
+                
+                # If we can increase, do so
+                if curr_height + adjustment_needed <= max_adjacent + 5:
+                    red_heights_with_idx[i] = (curr_idx, curr_height + adjustment_needed)
+                else:
+                    # Otherwise, try to decrease previous height
+                    slot_idx_prev = sorted_slot_indices[prev_idx]
+                    adjacent_heights_prev = slot_adjacent_heights[slot_idx_prev]
+                    min_adjacent_prev = min(adjacent_heights_prev)
+                    
+                    if prev_height - adjustment_needed >= min_adjacent_prev - 5:
+                        red_heights_with_idx[i - 1] = (prev_idx, prev_height - adjustment_needed)
+        
+        # Rebuild initial_red_heights with adjusted values
+        for idx, height in red_heights_with_idx:
+            initial_red_heights[sorted_slot_indices[idx]] = height
         
         # Optimal assignment: minimize sum of |red_height - slot_target|
         assignment = self._optimal_assignment(initial_red_heights, slot_targets, slot_positions)
@@ -326,17 +384,11 @@ class TaskGenerator(BaseGenerator):
         for red_idx, slot_pos in assignment.items():
             slot_to_red[slot_pos] = red_idx
         
-        # Generate red book heights from their assigned slot's adjacent blue books
-        for slot_pos, adjacent_heights in zip(slot_positions, slot_adjacent_heights):
+        # Use the adjusted heights from initial generation
+        for slot_idx, slot_pos in enumerate(slot_positions):
             if slot_pos in slot_to_red:
                 red_idx = slot_to_red[slot_pos]
-                # Choose the adjacent blue book height closest to slot target
-                slot_idx = slot_positions.index(slot_pos)
-                target = slot_targets[slot_idx]
-                
-                # Find closest adjacent height to target
-                closest_height = min(adjacent_heights, key=lambda h: abs(h - target))
-                red_heights[red_idx] = closest_height
+                red_heights[red_idx] = initial_red_heights[slot_idx]
         
         return red_heights, assignment
     
@@ -536,30 +588,52 @@ class TaskGenerator(BaseGenerator):
     ) -> Tuple[int, int, int]:
         """
         Calculate layout parameters for centered shelf with red books queue on the right.
+        Ensures all books stay within scene boundaries.
         
         Returns:
             (x_start, red_queue_x_start, red_spacing)
         """
         # Calculate required space for red books queue
         red_spacing = spacing  # Use same spacing for red books
-        required_red_space = num_red * (book_width + red_spacing) - red_spacing  # Last book doesn't need spacing after
-        right_margin = int(20 * scale_factor)  # Keep some margin from right edge
-        red_queue_width = required_red_space + right_margin  # Total width needed for red books queue
+        left_margin = int(30 * scale_factor)  # Margin from left edge
+        right_margin = int(30 * scale_factor)  # Margin from right edge
+        gap_between = int(30 * scale_factor)  # Gap between shelf and red books queue
         
         # Calculate shelf (blue books + gaps) total width
         num_blue_and_gaps = len(all_positions)
         shelf_width = num_blue_and_gaps * (book_width + spacing) - spacing  # Last item doesn't need spacing after
         
-        # Calculate gap between shelf and red queue
-        gap_between = int(30 * scale_factor)  # Gap between shelf and red books queue
+        # Calculate red books queue width
+        required_red_space = num_red * (book_width + red_spacing) - red_spacing  # Last book doesn't need spacing after
         
-        # Center the shelf in the remaining space (left side)
-        # Available space for shelf area = width - red_queue_width
-        available_for_shelf = width - red_queue_width
-        x_start = (available_for_shelf - shelf_width) // 2  # Center shelf in available space
+        # Total required width
+        total_required = left_margin + shelf_width + gap_between + required_red_space + right_margin
         
-        # Red books queue starts after shelf + gap
+        # Check if everything fits
+        if total_required > width:
+            # Need to adjust spacing or layout to fit within boundaries
+            # Strategy: reduce spacing and margins proportionally
+            scale_down = width / total_required
+            left_margin = int(left_margin * scale_down)
+            right_margin = int(right_margin * scale_down)
+            gap_between = int(gap_between * scale_down)
+            red_spacing = int(red_spacing * scale_down)
+            
+            # Recalculate widths with new spacing
+            shelf_width = num_blue_and_gaps * (book_width + int(spacing * scale_down)) - int(spacing * scale_down)
+            required_red_space = num_red * (book_width + red_spacing) - red_spacing
+        
+        # Calculate positions
+        x_start = left_margin
         red_queue_x_start = x_start + shelf_width + gap_between
+        
+        # Final safety check: ensure last red book is within bounds
+        last_red_book_right_edge = red_queue_x_start + required_red_space
+        if last_red_book_right_edge > width - right_margin:
+            # Shift everything left to ensure right margin
+            shift_left = last_red_book_right_edge - (width - right_margin)
+            x_start = max(left_margin, x_start - shift_left)
+            red_queue_x_start = x_start + shelf_width + gap_between
         
         return x_start, red_queue_x_start, red_spacing
     
@@ -888,7 +962,11 @@ class TaskGenerator(BaseGenerator):
         
         # Final state: all new books inserted, keep this state static
         # Use reserved final_hold_frames to ensure task completion is clearly visible
-        final_frame = self._render_final_state(blue_heights, red_heights, insertion_indices, color_scheme, visual_props)
+        # Use _render_partial_state with all slots filled to avoid "flash/alignment" effect
+        # This maintains the same visual layout as animation frames (with spacing between books)
+        final_frame = self._render_partial_state(
+            blue_heights, red_heights, insertion_indices, len(red_insertions), red_queue_order, color_scheme, visual_props
+        )
         for _ in range(final_hold_frames):
             frames.append(final_frame.copy())
         
