@@ -73,7 +73,7 @@ In the scene, there is a bookshelf with a set of books already placed, and a few
 <table>
 <tr>
   <td align="center"><img src="samples/O-30_first_0.png" width="250"/></td>
-  <td align="center"><img src="samples/O-30_video_0.gif" width="400"/></td>
+  <td align="center"><img src="samples/O-30_video_0.gif" width="320"/></td>
   <td align="center"><img src="samples/O-30_final_0.png" width="250"/></td>
 </tr>
 <tr>
