@@ -65,9 +65,8 @@ python examples/generate.py --num-samples 100 --output data/my_output
 ### Prompt
 
 ```
-In the scene, there is a bookshelf with a set of books already placed, and a few orange books waiting on the right. There are gaps between the books on the shelf. Place each orange book into a gap where its height is closest to the surrounding books. Show the insertion process step by step.
+In the scene, there is a bookshelf with a set of books already placed, and a few red books waiting on the right. There are gaps between the books on the shelf. Place each red book into a gap where its height is closest to the surrounding books. Show the insertion process step by step.
 ```
-
 ### Visual
 
 <table>
@@ -115,15 +114,14 @@ Insert new books into gaps on a bookshelf by finding the optimal position for ea
 ## 📦 Data Format
 
 ```
-data/bookshelf_task/
-├── bookshelf_0000/
-│   ├── first_frame.png          # Initial state (books on shelf with gaps)
-│   ├── final_frame.png          # Final state (all books inserted)
-│   ├── prompt.txt               # Task instructions
-│   └── ground_truth.mp4         # Solution video (16 fps)
-├── bookshelf_0001/
-│   └── ...
+data/questions/bookshelf_insertion_task/bookshelf_insertion_00000000/
+├── first_frame.png      # Initial state (books on shelf with gaps)
+├── final_frame.png      # Final state (all books inserted)
+├── prompt.txt           # Task instructions
+├── ground_truth.mp4     # Solution video (16 fps)
+└── question_metadata.json # Task metadata
 ```
+
 
 **File specifications**: Images are 1024×1024 PNG. Videos are MP4 at 16 fps, variable duration based on number of insertions.
 

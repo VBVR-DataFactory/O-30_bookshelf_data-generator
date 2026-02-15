@@ -40,6 +40,14 @@ class OutputWriter:
             video_ext = video_src.suffix  # .mp4 or .avi
             shutil.copy(video_src, task_dir / f"ground_truth{video_ext}")
         
+        
+        # Write metadata if provided
+        if task_pair.metadata is not None:
+            import json
+            (task_dir / "question_metadata.json").write_text(
+                json.dumps(task_pair.metadata, ensure_ascii=False, indent=2)
+            )
+        
         return task_dir
     
     def _format_insertion_indices(self, indices: Dict[int, int]) -> str:
