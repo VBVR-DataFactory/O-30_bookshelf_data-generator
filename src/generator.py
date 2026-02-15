@@ -12,7 +12,7 @@ import numpy as np
 import tempfile
 import colorsys
 from pathlib import Path
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Any
 from PIL import Image, ImageDraw
 
 from core import BaseGenerator, TaskPair, ImageRenderer
@@ -197,6 +197,23 @@ class TaskGenerator(BaseGenerator):
         # Get prompt with color substitution
         prompt = get_prompt("default", color_scheme)
         
+        # Build objects metadata
+        objects = self._build_objects_metadata(
+            blue_heights, red_heights, insertion_indices, red_queue_order,
+            color_scheme, visual_props
+        )
+        
+        # Build task_data with object-centric metadata
+        optimized_task_data = {
+            "num_existing": len(blue_heights),
+            "num_new": num_red,
+            "objects": objects
+        }
+        
+        metadata = self._build_metadata(task_id, optimized_task_data)
+        
+        
+        
         return TaskPair(
             task_id=task_id,
             domain=self.config.domain,
@@ -204,9 +221,118 @@ class TaskGenerator(BaseGenerator):
             first_image=first_image,
             final_image=final_image,
             ground_truth_video=video_path,
-            insertion_indices=insertion_indices
+            insertion_indices=insertion_indices,
+                    metadata=metadata
         )
     
+    # ══════════════════════════════════════════════════════════════════════════
+    #  METADATA BUILDING
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _build_objects_metadata(
+        self,
+        blue_heights: List[float],
+        red_heights: List[float],
+        insertion_indices: Dict[int, int],
+        red_queue_order: List[int],
+        color_scheme: Dict[str, Tuple[Tuple[int, int, int], str]],
+        visual_props: Dict[str, any]
+    ) -> List[Dict[str, Any]]:
+        """
+        Build objects metadata with all books as objects.
+        
+        Args:
+            blue_heights: Heights of existing blue books
+            red_heights: Heights of red books to insert
+            insertion_indices: Mapping from red book index to insertion position
+            red_queue_order: Order of red books in the queue
+            color_scheme: Color scheme dictionary
+            visual_props: Visual properties dictionary
+        
+        Returns:
+            List of book objects with their properties
+        """
+        objects = []
+        width, height = self.config.image_size
+        scale_factor = width / 800.0
+        shelf_y = height // 2
+        spacing = int(5 * scale_factor)
+        book_width = visual_props['book_width']
+        
+        # Calculate layout structure to get positions
+        all_positions = self._build_layout_structure(blue_heights, red_heights, insertion_indices)
+        num_red = len(red_heights)
+        
+        # Calculate layout parameters
+        x_start, red_queue_x_start, red_spacing = self._calculate_layout_params(
+            width, scale_factor, all_positions, num_red, book_width, spacing
+        )
+        
+        existing_color, _ = color_scheme['existing']
+        new_color, new_color_name = color_scheme['new']
+        
+        # Add blue books (existing books on shelf)
+        blue_idx = 0
+        for i, (pos_type, pos_height, _) in enumerate(all_positions):
+            if pos_type == 'blue':
+                x = x_start + i * (book_width + spacing)
+                center_x = x + book_width / 2
+                center_y = shelf_y - int(pos_height * 1.5) / 2
+                
+                objects.append({
+                    "symbol": "book",
+                    "type": "existing",
+                    "height": round(pos_height, 2),
+                    "center": [round(center_x, 2), round(center_y, 2)],
+                    "position": i,  # Position in the shelf layout
+                    "color": list(existing_color),
+                    "width": book_width
+                })
+                blue_idx += 1
+        
+        # Add red books (books to insert)
+        for red_idx in range(len(red_heights)):
+            red_height = red_heights[red_idx]
+            insertion_pos = insertion_indices[red_idx]
+            
+            # Initial position (in queue on the right)
+            queue_idx = red_queue_order.index(red_idx)
+            initial_x = red_queue_x_start + queue_idx * (book_width + red_spacing)
+            initial_center_x = initial_x + book_width / 2
+            initial_center_y = shelf_y - int(red_height * 1.5) / 2
+            
+            # Final position (in shelf after insertion)
+            # Find the gap position in layout
+            final_position = None
+            for i, (pos_type, _, gap_red_idx) in enumerate(all_positions):
+                if pos_type == 'gap' and gap_red_idx == red_idx:
+                    final_position = i
+                    break
+            
+            if final_position is not None:
+                final_x = x_start + final_position * (book_width + spacing)
+                final_center_x = final_x + book_width / 2
+                final_center_y = shelf_y - int(red_height * 1.5) / 2
+            else:
+                # Fallback: use insertion_pos
+                final_x = x_start + insertion_pos * (book_width + spacing)
+                final_center_x = final_x + book_width / 2
+                final_center_y = shelf_y - int(red_height * 1.5) / 2
+            
+            objects.append({
+                "symbol": "book",
+                "type": "new",
+                "height": round(red_height, 2),
+                "initial_center": [round(initial_center_x, 2), round(initial_center_y, 2)],
+                "final_center": [round(final_center_x, 2), round(final_center_y, 2)],
+                "insertion_position": insertion_pos,
+                "color": list(new_color),
+                "color_name": new_color_name,
+                "width": book_width
+            })
+        
+        return objects
+
     # ══════════════════════════════════════════════════════════════════════════
     #  DATA GENERATION
     # ══════════════════════════════════════════════════════════════════════════
