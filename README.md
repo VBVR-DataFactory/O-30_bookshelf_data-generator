@@ -12,7 +12,7 @@ Each sample pairs a **task** (first frame + prompt describing what needs to happ
 |----------|-------|
 | **Task ID** | O-30 |
 | **Task** | Bookshelf Insertion |
-| **Category** | Spatial Reasoning/Pattern Matching |
+| **Category** | Abstraction |
 | **Resolution** | 1024×1024 px |
 | **FPS** | 16 fps |
 | **Duration** | Variable |
