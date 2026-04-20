@@ -191,7 +191,14 @@ class TaskGenerator(BaseGenerator):
         video_path = None
         if self.config.generate_videos and self.video_generator:
             video_path = self._generate_video(
-                blue_heights, red_heights, insertion_indices, task_id, red_queue_order, color_scheme, visual_props
+                blue_heights,
+                red_heights,
+                insertion_indices,
+                task_id,
+                red_queue_order,
+                color_scheme,
+                visual_props,
+                final_image,
             )
         
         # Get prompt with color substitution
@@ -912,28 +919,32 @@ class TaskGenerator(BaseGenerator):
         
         # Build the same layout structure as initial state
         all_positions = self._build_layout_structure(blue_heights, red_heights, insertion_indices)
-        
-        # Draw all books (existing books and new books filling gaps)
-        spacing = int(5 * scale_factor)  # Scaled spacing
-        x_start = int(50 * scale_factor)  # Scaled start position
-        
+
+        # Must use the same horizontal layout as initial / partial / video frames
+        # (_calculate_layout_params centers the shelf). A fixed x_start here caused
+        # the whole stack to jump when swapping to final_image at end of video.
+        spacing = int(5 * scale_factor)
+        num_red = len(red_heights)
+        x_start, _red_queue_x_start, _red_spacing = self._calculate_layout_params(
+            width, scale_factor, all_positions, num_red, book_width, spacing
+        )
+        outline_w = max(2, int(2 * scale_factor))
+
         for i, (pos_type, pos_height, red_idx) in enumerate(all_positions):
             x = x_start + i * (book_width + spacing)
             scaled_h = int(pos_height * 1.5)
             y_top = shelf_y - scaled_h
-            
+
             if pos_type == 'blue':
-                # Draw existing book (unchanged)
                 fill_color = existing_color
             else:
-                # Draw new book (filling gap)
                 fill_color = new_color
-            
+
             draw.rectangle(
                 [x, y_top, x + book_width, shelf_y],
                 fill=fill_color,
                 outline=(0, 0, 0),
-                width=2
+                width=outline_w,
             )
         
         return img
@@ -950,7 +961,8 @@ class TaskGenerator(BaseGenerator):
         task_id: str,
         red_queue_order: List[int],
         color_scheme: Dict[str, Tuple[Tuple[int, int, int], str]],
-        visual_props: Dict[str, any]
+        visual_props: Dict[str, any],
+        final_image: Image.Image,
     ) -> str:
         """Generate animation video showing red books being inserted."""
         temp_dir = Path(tempfile.gettempdir()) / f"{self.config.domain}_videos"
@@ -959,7 +971,13 @@ class TaskGenerator(BaseGenerator):
         
         # Create animation frames
         frames = self._create_insertion_animation_frames(
-            blue_heights, red_heights, insertion_indices, red_queue_order, color_scheme, visual_props
+            blue_heights,
+            red_heights,
+            insertion_indices,
+            red_queue_order,
+            color_scheme,
+            visual_props,
+            final_image,
         )
         
         result = self.video_generator.create_video_from_frames(
@@ -977,6 +995,7 @@ class TaskGenerator(BaseGenerator):
         red_queue_order: List[int],
         color_scheme: Dict[str, Tuple[Tuple[int, int, int], str]],
         visual_props: Dict[str, any],
+        final_image: Image.Image,
         hold_frames: int = 10,
         transition_frames: int = 30
     ) -> List[Image.Image]:
@@ -1086,17 +1105,11 @@ class TaskGenerator(BaseGenerator):
                 for _ in range(mid_hold_frames):
                     frames.append(partial_frame.copy())
         
-        # Final state: all new books inserted, keep this state static
-        # Use reserved final_hold_frames to ensure task completion is clearly visible
-        # Use _render_partial_state with all slots filled to avoid "flash/alignment" effect
-        # This maintains the same visual layout as animation frames (with spacing between books)
-        # Phase 3: Final hold - use _render_final_state for consistency with final_image
-        final_frame = self._render_final_state(
-            blue_heights, red_heights, insertion_indices, color_scheme, visual_props
-        )
+        # Final hold: reuse the exact final_image used for final_frame.png so the last
+        # video frames are pixel-identical (avoids one-frame flicker from re-rendering).
         for _ in range(final_hold_frames):
-            frames.append(final_frame.copy())
-        
+            frames.append(final_image.copy())
+
         return frames
     
     def _render_horizontal_move_frame(
