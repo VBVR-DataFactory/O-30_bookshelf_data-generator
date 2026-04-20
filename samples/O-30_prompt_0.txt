@@ -1,1 +1,1 @@
-In the scene, there is a bookshelf with a set of books already placed, and a few red books waiting on the right. There are gaps between the books on the shelf. Place each red book into a gap where its height is closest to the surrounding books. Show the insertion process step by step.
+In the scene, there is a bookshelf with a set of books already placed, and a few purple books waiting on the right. There are gaps between the books on the shelf. Place each purple book into a gap where its height is closest to the surrounding books. Show the insertion process step by step.
