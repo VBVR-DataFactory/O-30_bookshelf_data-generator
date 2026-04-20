@@ -167,9 +167,9 @@ class TaskGenerator(BaseGenerator):
         # Generate book heights
         blue_heights = self._generate_blue_heights()
         
-        # Randomly determine number of red books (gaps) for variety
-        # Number of gaps must equal number of red books
-        num_red = random.randint(2, 5)  # Vary between 2-5 red books
+        # Randomly determine number of red books (gaps) for variety.
+        # Cap at 4 so the initial queue always stays fully in-frame.
+        num_red = random.randint(2, 4)  # Vary between 2-4 red books
         
         # Calculate slot positions and adjacent blue books
         slot_info = self._calculate_slot_info(blue_heights, num_red)
